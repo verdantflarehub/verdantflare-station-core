@@ -18,6 +18,7 @@ class ReleaseGuards(unittest.TestCase):
             for status, output, accepted in [
                 (0, 'existing manifest', False),
                 (1, 'manifest unknown', True),
+                (1, 'ERROR: registry.invalid/repo:tag: not found', True),
                 (1, 'manifest registry.invalid/repo:tag: not found', True),
                 (1, 'unauthorized', False),
                 (1, 'repository not found', False),
