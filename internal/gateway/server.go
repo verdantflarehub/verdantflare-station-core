@@ -20,10 +20,11 @@ import (
 
 	"github.com/verdantflarehub/verdantflare-station-core/internal/catalog"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/identity"
+	"github.com/verdantflarehub/verdantflare-station-core/internal/operations"
 	"github.com/verdantflarehub/verdantflare-station-core/migrations"
 )
 
-const Version = "0.1.0"
+const Version = "0.1.1"
 
 var requestIDPattern = regexp.MustCompile(`^[a-zA-Z0-9._:-]{1,128}$`)
 
@@ -51,6 +52,7 @@ type Server struct {
 	BootstrapToken string
 	Logger         *slog.Logger
 	Catalog        *catalog.Service
+	Operations     *operations.Service
 }
 type responseWriter struct {
 	http.ResponseWriter
@@ -202,7 +204,8 @@ func (s *Server) ServeHTTP(original http.ResponseWriter, r *http.Request) {
 		failure(w, requestID, identity.Invalid)
 		return
 	}
-	routes := map[string]string{"/healthz": "GET", "/readyz": "GET", "/identity/bootstrap": "POST", "/identity/login": "POST", "/identity/refresh": "POST", "/identity/logout": "POST", "/identity/me": "GET", "/identity/scopes": "GET", "/station/health": "GET"}
+	routes := map[string]string{
+		"/app-commands": "POST", "/healthz": "GET", "/readyz": "GET", "/identity/bootstrap": "POST", "/identity/login": "POST", "/identity/refresh": "POST", "/identity/logout": "POST", "/identity/me": "GET", "/identity/scopes": "GET", "/station/health": "GET"}
 	if r.URL.Path == "/catalog/apps" || strings.HasPrefix(r.URL.Path, "/catalog/apps/") {
 		routes[r.URL.Path] = "GET"
 	}
@@ -231,6 +234,28 @@ func (s *Server) ServeHTTP(original http.ResponseWriter, r *http.Request) {
 			return
 		}
 		reply(w, 200, Probe{"Ready", Version, migrations.ContractsMajor, migrations.Version, requestID})
+		return
+	case "/app-commands":
+		user, e := s.Identity.Me(ctx, requestID, bearer(r))
+		if e != nil {
+			failure(w, requestID, e)
+			return
+		}
+		var command operations.Command
+		if e = decode(w, r, &command, false); e != nil {
+			failure(w, requestID, e)
+			return
+		}
+		if s.Operations == nil {
+			reply(w, 503, ErrorResponse{"SERVICE_UNAVAILABLE", "Application operations are not configured", requestID})
+			return
+		}
+		op, e := s.Operations.Submit(ctx, user, command)
+		if e != nil {
+			failure(w, requestID, e)
+			return
+		}
+		reply(w, 202, op)
 		return
 	case "/identity/bootstrap":
 		expected := sha256.Sum256([]byte(s.BootstrapToken))

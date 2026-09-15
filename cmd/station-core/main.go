@@ -16,6 +16,7 @@ import (
 	"github.com/verdantflarehub/verdantflare-station-core/internal/config"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/gateway"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/identity"
+	"github.com/verdantflarehub/verdantflare-station-core/internal/operations"
 	"github.com/verdantflarehub/verdantflare-station-core/migrations"
 )
 
@@ -89,7 +90,8 @@ func run() int {
 			return 1
 		}
 	}
-	server := &http.Server{Addr: c.Listen, Handler: &gateway.Server{Identity: service, BootstrapToken: c.BootstrapToken, Logger: logger, Catalog: appCatalog}, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
+	ops := &operations.Service{Pool: pool, Catalog: appCatalog, StationID: c.StationID}
+	server := &http.Server{Addr: c.Listen, Handler: &gateway.Server{Identity: service, BootstrapToken: c.BootstrapToken, Logger: logger, Catalog: appCatalog, Operations: ops}, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	done := make(chan error, 1)
 	go func() { done <- server.ListenAndServe() }()
 	logger.Info("station_core_starting", "version", gateway.Version, "station_id", c.StationID, "listen", c.Listen, "contracts_major", migrations.ContractsMajor, "migration_version", migrations.Version, "session_ttl", c.SessionTTL.String(), "login_failure_limit", 5, "account_lock_duration", "15m", "log_level", c.LogLevel)
