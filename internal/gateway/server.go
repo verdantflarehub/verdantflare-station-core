@@ -25,7 +25,7 @@ import (
 	"github.com/verdantflarehub/verdantflare-station-core/migrations"
 )
 
-const Version = "0.2.0"
+const Version = "0.3.0"
 
 var requestIDPattern = regexp.MustCompile(`^[a-zA-Z0-9._:-]{1,128}$`)
 

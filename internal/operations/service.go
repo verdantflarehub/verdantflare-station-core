@@ -15,13 +15,14 @@ import (
 )
 
 type Command struct {
-	RequestID      string `json:"request_id"`
-	IdempotencyKey string `json:"idempotency_key"`
-	OrganizationID string `json:"organization_id"`
-	StationID      string `json:"station_id"`
-	AppID          string `json:"app_id"`
-	AppVersion     string `json:"app_version"`
-	Action         string `json:"action"`
+	ExpectedWorkloadUID string `json:"expected_workload_uid,omitempty"`
+	RequestID           string `json:"request_id"`
+	IdempotencyKey      string `json:"idempotency_key"`
+	OrganizationID      string `json:"organization_id"`
+	StationID           string `json:"station_id"`
+	AppID               string `json:"app_id"`
+	AppVersion          string `json:"app_version"`
+	Action              string `json:"action"`
 }
 type Operation struct {
 	RequestID      string `json:"request_id"`
@@ -58,7 +59,14 @@ func (s *Service) Submit(ctx context.Context, u identity.IdentityContext, c Comm
 	if c.StationID != s.StationID || c.OrganizationID != u.OrganizationID || len(c.IdempotencyKey) < 8 || len(c.IdempotencyKey) > 128 {
 		return o, identity.Invalid
 	}
-	if c.Action != "install" && c.Action != "start" && c.Action != "stop" && c.Action != "restart" && c.Action != "delete" {
+	if c.Action != "install" && c.Action != "start" && c.Action != "stop" && c.Action != "restart" && c.Action != "delete" && c.Action != "adopt" {
+		return o, identity.Invalid
+	}
+	if c.Action == "adopt" {
+		if _, e := uuid.Parse(c.ExpectedWorkloadUID); e != nil {
+			return o, identity.Invalid
+		}
+	} else if c.ExpectedWorkloadUID != "" {
 		return o, identity.Invalid
 	}
 	normalized := c
@@ -78,7 +86,7 @@ func (s *Service) Submit(ctx context.Context, u identity.IdentityContext, c Comm
 		return o, e
 	}
 	// Serialize submissions for an app so concurrent operations cannot both be accepted.
-	_, e = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, u.OrganizationID+":"+s.StationID+":"+c.AppID)
+	_, e = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, s.StationID+":"+c.AppID)
 	if e != nil {
 		return o, e
 	}
@@ -109,7 +117,7 @@ func (s *Service) Submit(ctx context.Context, u identity.IdentityContext, c Comm
 		return o, identity.Invalid
 	}
 	var busy bool
-	e = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM station.app_operations WHERE organization_id=$1 AND station_id=$2 AND app_id=$3 AND status IN ('accepted','running'))`, u.OrganizationID, s.StationID, c.AppID).Scan(&busy)
+	e = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM station.app_operations WHERE station_id=$1 AND app_id=$2 AND status IN ('accepted','running'))`, s.StationID, c.AppID).Scan(&busy)
 	if e != nil {
 		return o, e
 	}
@@ -125,7 +133,7 @@ func (s *Service) Submit(ctx context.Context, u identity.IdentityContext, c Comm
 	if c.Action == "restart" {
 		phase = "starting"
 	}
-	_, e = tx.Exec(ctx, `INSERT INTO station.app_operations(operation_id,request_id,user_id,organization_id,station_id,app_id,app_version,action,status,phase,idempotency_key,request_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'accepted',$9,$10,$11)`, oid, c.RequestID, u.UserID, u.OrganizationID, s.StationID, c.AppID, c.AppVersion, c.Action, phase, c.IdempotencyKey, sum[:])
+	_, e = tx.Exec(ctx, `INSERT INTO station.app_operations(operation_id,request_id,user_id,organization_id,station_id,app_id,app_version,action,status,phase,idempotency_key,request_hash,expected_workload_uid) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'accepted',$9,$10,$11,$12)`, oid, c.RequestID, u.UserID, u.OrganizationID, s.StationID, c.AppID, c.AppVersion, c.Action, phase, c.IdempotencyKey, sum[:], c.ExpectedWorkloadUID)
 	if e != nil {
 		return o, e
 	}

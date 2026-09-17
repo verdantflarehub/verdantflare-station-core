@@ -30,12 +30,15 @@ type Entry struct {
 	Images       []Image  `json:"images"`
 }
 type Observation struct {
-	State      string    `json:"state"`
-	Reason     string    `json:"reason"`
-	ObservedAt time.Time `json:"observed_at"`
-	Desired    *int32    `json:"desired_replicas"`
-	Ready      *int32    `json:"ready_replicas"`
-	Images     []Image   `json:"images"`
+	UID              string            `json:"uid,omitempty"`
+	ManagementStatus string            `json:"management_status,omitempty"`
+	Ownership        map[string]string `json:"-"`
+	State            string            `json:"state"`
+	Reason           string            `json:"reason"`
+	ObservedAt       time.Time         `json:"observed_at"`
+	Desired          *int32            `json:"desired_replicas"`
+	Ready            *int32            `json:"ready_replicas"`
+	Images           []Image           `json:"images"`
 }
 type Item struct {
 	Entry
@@ -140,4 +143,23 @@ func (s *Service) Get(ctx context.Context, id string) (Item, bool) {
 		}
 	}
 	return Item{}, false
+}
+
+// ProjectManagement scopes workload ownership to the authenticated station/organization.
+func (i *Item) ProjectManagement(station, org string) {
+	d := &i.Deployment
+	d.ManagementStatus = "unknown"
+	if d.UID == "" {
+		return
+	}
+	d.ManagementStatus = "unmanaged"
+	for key := range d.Ownership {
+		if strings.HasPrefix(key, "station.verdantflare.com/") {
+			d.ManagementStatus = "foreign"
+			break
+		}
+	}
+	if d.Ownership["station.verdantflare.com/station-id"] == station && d.Ownership["station.verdantflare.com/organization-id"] == org && d.Ownership["station.verdantflare.com/app-id"] == i.AppID && d.Ownership["station.verdantflare.com/template-hash"] != "" {
+		d.ManagementStatus = "managed"
+	}
 }

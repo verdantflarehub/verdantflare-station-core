@@ -33,7 +33,11 @@ func (s *Server) serveCatalog(w http.ResponseWriter, r *http.Request, ctx contex
 		return
 	}
 	if r.URL.Path == "/catalog/apps" {
-		reply(w, 200, catalog.List{RequestID: requestID, StationID: user.StationID, Items: s.Catalog.List(ctx, group)})
+		items := s.Catalog.List(ctx, group)
+		for i := range items {
+			items[i].ProjectManagement(user.StationID, user.OrganizationID)
+		}
+		reply(w, 200, catalog.List{RequestID: requestID, StationID: user.StationID, Items: items})
 		return
 	}
 	app, found := s.Catalog.Get(ctx, strings.TrimPrefix(r.URL.Path, "/catalog/apps/"))
@@ -41,5 +45,6 @@ func (s *Server) serveCatalog(w http.ResponseWriter, r *http.Request, ctx contex
 		reply(w, 404, ErrorResponse{"NOT_FOUND", "Application not found", requestID})
 		return
 	}
+	app.ProjectManagement(user.StationID, user.OrganizationID)
 	reply(w, 200, catalog.Detail{RequestID: requestID, StationID: user.StationID, App: app})
 }

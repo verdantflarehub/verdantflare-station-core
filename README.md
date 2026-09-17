@@ -48,7 +48,7 @@ Configure repository or organization Actions secrets `REGISTRY_ENDPOINT_ALIYUN`
 env:
   IMAGE_NAME: wod/verdantflare-station
   SERVICE: station-core
-  VERSION: 0.2.0
+  VERSION: 0.3.0
 ```
 
 The published reference is `<registry>/<IMAGE_NAME>:<SERVICE>-v<VERSION>`.

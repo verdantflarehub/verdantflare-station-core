@@ -90,4 +90,32 @@ func TestOperationRecovery(t *testing.T) {
 	if _, err = svc.Submit(ctx, u, c); err != nil {
 		t.Fatalf("new command after failure: %v", err)
 	}
+	_, err = pool.Exec(ctx, `UPDATE station.app_operations SET status='succeeded',phase='completed' WHERE status='accepted'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Action = "adopt"
+	c.IdempotencyKey = "adoption-key-1"
+	if _, err = svc.Submit(ctx, u, c); !errors.Is(err, identity.Invalid) {
+		t.Fatal("missing UID accepted", err)
+	}
+	c.ExpectedWorkloadUID = uuid.NewString()
+	adopted, err := svc.Submit(ctx, u, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var storedUID string
+	if err = pool.QueryRow(ctx, `SELECT expected_workload_uid FROM station.app_operations WHERE operation_id=$1`, adopted.OperationID).Scan(&storedUID); err != nil || storedUID != c.ExpectedWorkloadUID {
+		t.Fatal("lost UID", err)
+	}
+	c.RequestID = "adopt-replay"
+	replay, err = svc.Submit(ctx, u, c)
+	if err != nil || replay.OperationID != adopted.OperationID {
+		t.Fatal("adopt replay", err)
+	}
+	c.ExpectedWorkloadUID = uuid.NewString()
+	if _, err = svc.Submit(ctx, u, c); !errors.Is(err, identity.Conflict) {
+		t.Fatal("changed UID accepted", err)
+	}
+
 }

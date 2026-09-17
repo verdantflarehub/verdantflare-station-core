@@ -38,7 +38,9 @@ func NewKubernetes(kubeconfig string) (*Kubernetes, error) {
 
 type deployment struct {
 	Metadata struct {
-		Generation int64 `json:"generation"`
+		Generation  int64             `json:"generation"`
+		UID         string            `json:"uid"`
+		Annotations map[string]string `json:"annotations"`
 	} `json:"metadata"`
 	Spec struct {
 		Replicas *int32 `json:"replicas"`
@@ -105,6 +107,8 @@ func (k *Kubernetes) Observe(ctx context.Context, e Entry) Observation {
 		out.Reason = "invalid_response"
 		return out
 	}
+	out.UID = d.Metadata.UID
+	out.Ownership = d.Metadata.Annotations
 	out.Desired = &desired
 	out.Ready = &d.Status.Ready
 	for _, c := range d.Spec.Template.Spec.Containers {

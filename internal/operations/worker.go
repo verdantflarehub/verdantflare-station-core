@@ -21,7 +21,7 @@ func (s *Service) DispatchOne(ctx context.Context, client pb.AppRuntimeClient) (
 	}
 	defer tx.Rollback(context.Background())
 	in := &pb.AppRequest{}
-	err = tx.QueryRow(ctx, `SELECT operation_id::text,request_id,user_id::text,organization_id::text,station_id::text,app_id,app_version,action FROM station.app_operations WHERE station_id=$1 AND status IN ('accepted','running') ORDER BY updated_at,operation_id LIMIT 1 FOR UPDATE SKIP LOCKED`, s.StationID).Scan(&in.OperationId, &in.RequestId, &in.UserId, &in.OrganizationId, &in.StationId, &in.AppId, &in.AppVersion, &in.Action)
+	err = tx.QueryRow(ctx, `SELECT operation_id::text,request_id,user_id::text,organization_id::text,station_id::text,app_id,app_version,action,expected_workload_uid FROM station.app_operations WHERE station_id=$1 AND status IN ('accepted','running') ORDER BY updated_at,operation_id LIMIT 1 FOR UPDATE SKIP LOCKED`, s.StationID).Scan(&in.OperationId, &in.RequestId, &in.UserId, &in.OrganizationId, &in.StationId, &in.AppId, &in.AppVersion, &in.Action, &in.ExpectedWorkloadUid)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
