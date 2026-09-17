@@ -7,6 +7,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"github.com/jackc/pgx/v5"
 	"io"
 	"log/slog"
 	"mime"
@@ -24,7 +25,7 @@ import (
 	"github.com/verdantflarehub/verdantflare-station-core/migrations"
 )
 
-const Version = "0.1.1"
+const Version = "0.2.0"
 
 var requestIDPattern = regexp.MustCompile(`^[a-zA-Z0-9._:-]{1,128}$`)
 
@@ -206,7 +207,7 @@ func (s *Server) ServeHTTP(original http.ResponseWriter, r *http.Request) {
 	}
 	routes := map[string]string{
 		"/app-commands": "POST", "/healthz": "GET", "/readyz": "GET", "/identity/bootstrap": "POST", "/identity/login": "POST", "/identity/refresh": "POST", "/identity/logout": "POST", "/identity/me": "GET", "/identity/scopes": "GET", "/station/health": "GET"}
-	if r.URL.Path == "/catalog/apps" || strings.HasPrefix(r.URL.Path, "/catalog/apps/") {
+	if strings.HasPrefix(r.URL.Path, "/app-operations/") || r.URL.Path == "/catalog/apps" || strings.HasPrefix(r.URL.Path, "/catalog/apps/") {
 		routes[r.URL.Path] = "GET"
 	}
 	method, ok := routes[r.URL.Path]
@@ -322,6 +323,23 @@ func (s *Server) ServeHTTP(original http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sessionID = user.SessionID
+	if strings.HasPrefix(route, "/app-operations/") {
+		if s.Operations == nil {
+			reply(w, 503, ErrorResponse{"SERVICE_UNAVAILABLE", "Application operations are not configured", requestID})
+			return
+		}
+		op, e := s.Operations.Get(ctx, user, strings.TrimPrefix(route, "/app-operations/"))
+		if errors.Is(e, pgx.ErrNoRows) {
+			reply(w, 404, ErrorResponse{"NOT_FOUND", "Operation not found", requestID})
+			return
+		}
+		if e != nil {
+			failure(w, requestID, e)
+			return
+		}
+		reply(w, 200, op)
+		return
+	}
 	if route == "/catalog/apps" || strings.HasPrefix(route, "/catalog/apps/") {
 		s.serveCatalog(w, r, ctx, requestID, user)
 		return

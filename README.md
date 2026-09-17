@@ -48,7 +48,7 @@ Configure repository or organization Actions secrets `REGISTRY_ENDPOINT_ALIYUN`
 env:
   IMAGE_NAME: wod/verdantflare-station
   SERVICE: station-core
-  VERSION: 0.1.0
+  VERSION: 0.2.0
 ```
 
 The published reference is `<registry>/<IMAGE_NAME>:<SERVICE>-v<VERSION>`.
@@ -84,3 +84,5 @@ readiness. This slice does not implement install/start/stop/restart/delete.
 Local live-catalog integration can set `STATION_TEST_CATALOG_FILE` and
 `STATION_TEST_KUBECONFIG` alongside the existing isolated test PostgreSQL URL.
 CI remains build-and-package only, as requested.
+
+Runtime dispatch: set `STATION_RUNTIME_TARGET` to the trusted internal Runtime gRPC endpoint (for example `station-runtime:5052`). Apply migration 4 before starting Core or Runtime. Without this setting, commands remain queued; it does not indicate execution has begun.

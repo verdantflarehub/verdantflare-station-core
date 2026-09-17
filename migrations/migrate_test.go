@@ -38,7 +38,7 @@ func TestMigrationLifecycle(t *testing.T) {
 	if _, err = p.Exec(ctx, "UPDATE station.schema_migrations SET checksum=$1 WHERE version=1", all[0].checksum); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = p.Exec(ctx, "INSERT INTO station.schema_migrations(version,name,checksum) VALUES(3,'future','future')"); err != nil {
+	if _, err = p.Exec(ctx, "INSERT INTO station.schema_migrations(version,name,checksum) VALUES($1,'future','future')", Version+1); err != nil {
 		t.Fatal(err)
 	}
 	if Check(ctx, p, id) == nil || Apply(ctx, p, id) == nil {

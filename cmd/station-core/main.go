@@ -11,6 +11,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	pb "github.com/verdantflarehub/verdantflare-station-core/internal/runtimev1"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/verdantflarehub/verdantflare-station-core/internal/catalog"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/config"
@@ -91,6 +94,19 @@ func run() int {
 		}
 	}
 	ops := &operations.Service{Pool: pool, Catalog: appCatalog, StationID: c.StationID}
+	if target := os.Getenv("STATION_RUNTIME_TARGET"); target != "" {
+		conn, e := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if e != nil {
+			logger.Error("runtime_configuration_invalid")
+			return 1
+		}
+		defer conn.Close()
+		workerCtx, stopWorker := context.WithCancel(ctx)
+		workerDone := make(chan struct{})
+		go func() { defer close(workerDone); ops.Run(workerCtx, pb.NewAppRuntimeClient(conn), logger) }()
+		defer func() { stopWorker(); <-workerDone }()
+	}
+
 	server := &http.Server{Addr: c.Listen, Handler: &gateway.Server{Identity: service, BootstrapToken: c.BootstrapToken, Logger: logger, Catalog: appCatalog, Operations: ops}, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	done := make(chan error, 1)
 	go func() { done <- server.ListenAndServe() }()
