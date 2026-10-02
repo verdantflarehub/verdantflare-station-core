@@ -16,7 +16,7 @@ func TestConfig(t *testing.T) {
 	if err != nil || c.SessionTTL != 8*time.Hour || c.Listen != "127.0.0.1:5050" {
 		t.Fatal("defaults invalid")
 	}
-	for _, tc := range []struct{ key, value string }{{"STATION_DATABASE_URL", "https://localhost/db"}, {"STATION_ID", uuid.NewString()}, {"STATION_LISTEN_ADDR", ":0"}, {"STATION_SESSION_TTL", "25h"}, {"STATION_BOOTSTRAP_TOKEN", "short"}, {"STATION_LOG_LEVEL", "trace"}, {"STATION_CONTRACTS_MAJOR", "2"}} {
+	for _, tc := range []struct{ key, value string }{{"STATION_DATABASE_URL", "https://localhost/db"}, {"STATION_ID", uuid.NewString()}, {"STATION_LISTEN_ADDR", ":0"}, {"STATION_SESSION_TTL", "721h"}, {"STATION_BOOTSTRAP_TOKEN", "short"}, {"STATION_LOG_LEVEL", "trace"}, {"STATION_CONTRACTS_MAJOR", "2"}} {
 		t.Run(tc.key, func(t *testing.T) {
 			t.Setenv(tc.key, tc.value)
 			if _, err := Load(); err == nil {

@@ -43,8 +43,8 @@ func Load() (Config, error) {
 	}
 	if v := os.Getenv("STATION_SESSION_TTL"); v != "" {
 		c.SessionTTL, e = time.ParseDuration(v)
-		if e != nil || c.SessionTTL < time.Minute || c.SessionTTL > 24*time.Hour {
-			return c, errors.New("STATION_SESSION_TTL must be between 1m and 24h")
+		if e != nil || c.SessionTTL < time.Minute || c.SessionTTL > 30*24*time.Hour {
+			return c, errors.New("STATION_SESSION_TTL must be between 1m and 720h")
 		}
 	}
 	if c.BootstrapToken != "" && len(c.BootstrapToken) < 32 {
