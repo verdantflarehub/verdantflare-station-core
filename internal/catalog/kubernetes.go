@@ -38,8 +38,11 @@ func NewKubernetes(kubeconfig string) (*Kubernetes, error) {
 
 type deployment struct {
 	Metadata struct {
+		Name        string            `json:"name"`
+		Namespace   string            `json:"namespace"`
 		Generation  int64             `json:"generation"`
 		UID         string            `json:"uid"`
+		Labels      map[string]string `json:"labels"`
 		Annotations map[string]string `json:"annotations"`
 	} `json:"metadata"`
 	Spec struct {
@@ -68,34 +71,9 @@ type ImageContainer struct {
 	Image string `json:"image"`
 }
 
-func (k *Kubernetes) Observe(ctx context.Context, e Entry) Observation {
+func observationFromDeployment(d *deployment) Observation {
 	out := Observation{State: "unknown", Reason: "unavailable", ObservedAt: time.Now().UTC(), Images: []Image{}}
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, k.baseURL+"/apis/apps/v1/namespaces/"+e.Namespace+"/deployments/"+e.WorkloadName, nil)
-	if err != nil {
-		return out
-	}
-	resp, err := k.client.Do(req)
-	if err != nil {
-		return out
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == 404 {
-		out.State = "not_installed"
-		out.Reason = "not_found"
-		return out
-	}
-	if resp.StatusCode == 401 || resp.StatusCode == 403 {
-		out.Reason = "forbidden"
-		return out
-	}
-	if resp.StatusCode != 200 {
-		return out
-	}
-	var d deployment
-	decoder := json.NewDecoder(io.LimitReader(resp.Body, 4<<20))
-	if decoder.Decode(&d) != nil || decoder.Decode(new(any)) != io.EOF || d.Metadata.Generation < 1 || len(d.Spec.Template.Spec.Containers) == 0 {
+	if d.Metadata.Generation < 1 || len(d.Spec.Template.Spec.Containers) == 0 {
 		out.Reason = "invalid_response"
 		return out
 	}
@@ -140,4 +118,38 @@ func (k *Kubernetes) Observe(ctx context.Context, e Entry) Observation {
 		out.Reason = "replicas_ready"
 	}
 	return out
+}
+
+func (k *Kubernetes) Observe(ctx context.Context, e Entry) Observation {
+	out := Observation{State: "unknown", Reason: "unavailable", ObservedAt: time.Now().UTC(), Images: []Image{}}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, k.baseURL+"/apis/apps/v1/namespaces/"+e.Namespace+"/deployments/"+e.WorkloadName, nil)
+	if err != nil {
+		return out
+	}
+	resp, err := k.client.Do(req)
+	if err != nil {
+		return out
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == 404 {
+		out.State = "not_installed"
+		out.Reason = "not_found"
+		return out
+	}
+	if resp.StatusCode == 401 || resp.StatusCode == 403 {
+		out.Reason = "forbidden"
+		return out
+	}
+	if resp.StatusCode != 200 {
+		return out
+	}
+	var d deployment
+	decoder := json.NewDecoder(io.LimitReader(resp.Body, 4<<20))
+	if decoder.Decode(&d) != nil || decoder.Decode(new(any)) != io.EOF {
+		out.Reason = "invalid_response"
+		return out
+	}
+	return observationFromDeployment(&d)
 }

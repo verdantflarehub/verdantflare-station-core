@@ -60,8 +60,9 @@ type Reader interface {
 	Observe(context.Context, Entry) Observation
 }
 type Service struct {
-	entries []Entry
-	reader  Reader
+	entries    []Entry
+	reader     Reader
+	discoverer Discoverer
 }
 
 var dnsName = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
@@ -96,7 +97,11 @@ func Load(path string, reader Reader) (*Service, error) {
 		ids[e.AppID] = true
 		targets[target] = true
 	}
-	return &Service{entries, reader}, nil
+	var disc Discoverer
+	if d, ok := reader.(Discoverer); ok {
+		disc = d
+	}
+	return &Service{entries, reader, disc}, nil
 }
 func ValidGroup(group string) bool { return group == "image" || group == "music" || group == "video" }
 func (s *Service) observe(ctx context.Context, e Entry) Item {
@@ -134,12 +139,53 @@ func (s *Service) List(ctx context.Context, group string) []Item {
 	}
 	close(jobs)
 	wg.Wait()
+
+	if s.discoverer != nil {
+		dynamicItems, err := s.discoverer.Discover(ctx)
+		if err == nil && len(dynamicItems) > 0 {
+			seen := make(map[string]int, len(out))
+			for idx, it := range out {
+				seen[it.AppID] = idx
+			}
+			for _, dyn := range dynamicItems {
+				if idx, exists := seen[dyn.AppID]; exists {
+					if out[idx].Deployment.State == "not_installed" || out[idx].Deployment.State == "unknown" {
+						out[idx].Deployment = dyn.Deployment
+					}
+				} else if group == "" || dyn.GroupID == group {
+					seen[dyn.AppID] = len(out)
+					out = append(out, dyn)
+				}
+			}
+		}
+	}
+
 	return out
 }
 func (s *Service) Get(ctx context.Context, id string) (Item, bool) {
 	for _, e := range s.entries {
 		if e.AppID == id {
-			return s.observe(ctx, e), true
+			it := s.observe(ctx, e)
+			if (it.Deployment.State == "not_installed" || it.Deployment.State == "unknown") && s.discoverer != nil {
+				if dyns, err := s.discoverer.Discover(ctx); err == nil {
+					for _, d := range dyns {
+						if d.AppID == id {
+							it.Deployment = d.Deployment
+							break
+						}
+					}
+				}
+			}
+			return it, true
+		}
+	}
+	if s.discoverer != nil {
+		if dyns, err := s.discoverer.Discover(ctx); err == nil {
+			for _, d := range dyns {
+				if d.AppID == id {
+					return d, true
+				}
+			}
 		}
 	}
 	return Item{}, false
