@@ -25,25 +25,52 @@ type GPUMetric struct {
 	PowerWatts   float64 `json:"power_watts"`
 }
 
+// DiskMetric represents storage partition telemetry.
+type DiskMetric struct {
+	Mountpoint  string  `json:"mountpoint"`
+	Device      string  `json:"device"`
+	FSType      string  `json:"fstype"`
+	TotalBytes  uint64  `json:"total_bytes"`
+	AvailBytes  uint64  `json:"avail_bytes"`
+	UsedBytes   uint64  `json:"used_bytes"`
+	UsedPercent float64 `json:"used_percent"`
+}
+
 // NodeMetric represents real-time host metrics.
 type NodeMetric struct {
-	CPUUtilizationPercent float64 `json:"cpu_utilization_percent"`
-	MemTotalBytes         uint64  `json:"mem_total_bytes"`
-	MemAvailableBytes     uint64  `json:"mem_available_bytes"`
-	MemUsedPercent        float64 `json:"mem_used_percent"`
+	CPUCores              int          `json:"cpu_cores"`
+	CPUUtilizationPercent float64      `json:"cpu_utilization_percent"`
+	CPULoad1              float64      `json:"cpu_load1"`
+	CPULoad5              float64      `json:"cpu_load5"`
+	CPULoad15             float64      `json:"cpu_load15"`
+	MemTotalBytes         uint64       `json:"mem_total_bytes"`
+	MemAvailableBytes     uint64       `json:"mem_available_bytes"`
+	MemUsedBytes          uint64       `json:"mem_used_bytes"`
+	MemBuffersBytes       uint64       `json:"mem_buffers_bytes"`
+	MemCachedBytes        uint64       `json:"mem_cached_bytes"`
+	MemUsedPercent        float64      `json:"mem_used_percent"`
+	StorageDisks          []DiskMetric `json:"storage_disks"`
 }
 
 // ResourceSummary combines high-level resource indicators for Studio OS.
 type ResourceSummary struct {
-	TotalGPUs          int     `json:"total_gpus"`
-	TotalVRAMMB        int64   `json:"total_vram_mb"`
-	UsedVRAMMB         int64   `json:"used_vram_mb"`
-	FreeVRAMMB         int64   `json:"free_vram_mb"`
-	AverageGPUUtil     float64 `json:"average_gpu_util"`
-	HostCPUUtilization float64 `json:"host_cpu_utilization"`
-	HostMemUsedPercent float64 `json:"host_mem_used_percent"`
-	Status             string  `json:"status"` // "Healthy", "Warning", "Degraded"
-	UpdatedAt          string  `json:"updated_at"`
+	TotalGPUs          int          `json:"total_gpus"`
+	TotalVRAMMB        int64        `json:"total_vram_mb"`
+	UsedVRAMMB         int64        `json:"used_vram_mb"`
+	FreeVRAMMB         int64        `json:"free_vram_mb"`
+	AverageGPUUtil     float64      `json:"average_gpu_util"`
+	HostCPUCores       int          `json:"host_cpu_cores"`
+	HostCPUUtilization float64      `json:"host_cpu_utilization"`
+	HostCPULoad1       float64      `json:"host_cpu_load1"`
+	HostMemTotalGB     float64      `json:"host_mem_total_gb"`
+	HostMemUsedGB      float64      `json:"host_mem_used_gb"`
+	HostMemUsedPercent float64      `json:"host_mem_used_percent"`
+	StorageTotalTB     float64      `json:"storage_total_tb"`
+	StorageUsedTB      float64      `json:"storage_used_tb"`
+	StorageUsedPercent float64      `json:"storage_used_percent"`
+	StorageDisks       []DiskMetric `json:"storage_disks,omitempty"`
+	Status             string       `json:"status"` // "Healthy", "Warning", "Degraded"
+	UpdatedAt          string       `json:"updated_at"`
 }
 
 type promResponse struct {
@@ -248,11 +275,34 @@ func (s *Service) GetNode(ctx context.Context) (*NodeMetric, error) {
 		return s.cachedNode, nil
 	}
 
-	node := &NodeMetric{}
+	node := &NodeMetric{
+		CPUCores: 24,
+	}
+
+	if coresResp, err := s.queryVector(ctx, `count(node_cpu_seconds_total{mode="idle"})`); err == nil && len(coresResp.Data.Result) > 0 {
+		val, _ := parseValue(coresResp.Data.Result[0].Value)
+		if val > 0 {
+			node.CPUCores = int(val)
+		}
+	}
+
 	cpuResp, err := s.queryVector(ctx, `100 - (avg(irate(node_cpu_seconds_total{mode="idle"}[1m])) * 100)`)
 	if err == nil && len(cpuResp.Data.Result) > 0 {
 		val, _ := parseValue(cpuResp.Data.Result[0].Value)
 		node.CPUUtilizationPercent = val
+	}
+
+	if l1, err := s.queryVector(ctx, "node_load1"); err == nil && len(l1.Data.Result) > 0 {
+		val, _ := parseValue(l1.Data.Result[0].Value)
+		node.CPULoad1 = val
+	}
+	if l5, err := s.queryVector(ctx, "node_load5"); err == nil && len(l5.Data.Result) > 0 {
+		val, _ := parseValue(l5.Data.Result[0].Value)
+		node.CPULoad5 = val
+	}
+	if l15, err := s.queryVector(ctx, "node_load15"); err == nil && len(l15.Data.Result) > 0 {
+		val, _ := parseValue(l15.Data.Result[0].Value)
+		node.CPULoad15 = val
 	}
 
 	totalMemResp, err := s.queryVector(ctx, "node_memory_MemTotal_bytes")
@@ -267,9 +317,62 @@ func (s *Service) GetNode(ctx context.Context) (*NodeMetric, error) {
 		node.MemAvailableBytes = uint64(val)
 	}
 
+	if bufResp, err := s.queryVector(ctx, "node_memory_Buffers_bytes"); err == nil && len(bufResp.Data.Result) > 0 {
+		val, _ := parseValue(bufResp.Data.Result[0].Value)
+		node.MemBuffersBytes = uint64(val)
+	}
+
+	if cacheResp, err := s.queryVector(ctx, "node_memory_Cached_bytes"); err == nil && len(cacheResp.Data.Result) > 0 {
+		val, _ := parseValue(cacheResp.Data.Result[0].Value)
+		node.MemCachedBytes = uint64(val)
+	}
+
 	if node.MemTotalBytes > 0 {
-		used := float64(node.MemTotalBytes - node.MemAvailableBytes)
-		node.MemUsedPercent = (used / float64(node.MemTotalBytes)) * 100.0
+		used := node.MemTotalBytes - node.MemAvailableBytes
+		node.MemUsedBytes = used
+		node.MemUsedPercent = (float64(used) / float64(node.MemTotalBytes)) * 100.0
+	}
+
+	// Disks
+	diskSizes := make(map[string]uint64)
+	diskAvail := make(map[string]uint64)
+	diskDevs := make(map[string]string)
+	diskFSTypes := make(map[string]string)
+
+	if sizesResp, err := s.queryVector(ctx, `node_filesystem_size_bytes{mountpoint=~"/|/data"}`); err == nil {
+		for _, r := range sizesResp.Data.Result {
+			mp := r.Metric["mountpoint"]
+			val, _ := parseValue(r.Value)
+			diskSizes[mp] = uint64(val)
+			diskDevs[mp] = r.Metric["device"]
+			diskFSTypes[mp] = r.Metric["fstype"]
+		}
+	}
+	if availResp, err := s.queryVector(ctx, `node_filesystem_avail_bytes{mountpoint=~"/|/data"}`); err == nil {
+		for _, r := range availResp.Data.Result {
+			mp := r.Metric["mountpoint"]
+			val, _ := parseValue(r.Value)
+			diskAvail[mp] = uint64(val)
+		}
+	}
+
+	for _, mp := range []string{"/data", "/"} {
+		size, ok := diskSizes[mp]
+		if !ok || size == 0 {
+			continue
+		}
+		avail := diskAvail[mp]
+		used := size - avail
+		usedPct := (float64(used) / float64(size)) * 100.0
+		node.StorageDisks = append(node.StorageDisks, DiskMetric{
+			Mountpoint:  mp,
+			Device:      diskDevs[mp],
+			FSType:      diskFSTypes[mp],
+			TotalBytes:  size,
+			AvailBytes:  avail,
+			UsedBytes:   used,
+			UsedPercent: usedPct,
+		})
 	}
 
 	s.cachedNode = node
@@ -306,8 +409,25 @@ func (s *Service) GetSummary(ctx context.Context) (*ResourceSummary, error) {
 	}
 
 	if node != nil {
+		summary.HostCPUCores = node.CPUCores
 		summary.HostCPUUtilization = node.CPUUtilizationPercent
+		summary.HostCPULoad1 = node.CPULoad1
+		summary.HostMemTotalGB = float64(node.MemTotalBytes) / (1024 * 1024 * 1024)
+		summary.HostMemUsedGB = float64(node.MemUsedBytes) / (1024 * 1024 * 1024)
 		summary.HostMemUsedPercent = node.MemUsedPercent
+		summary.StorageDisks = node.StorageDisks
+
+		var totalDisk, usedDisk uint64
+		for _, d := range node.StorageDisks {
+			totalDisk += d.TotalBytes
+			usedDisk += d.UsedBytes
+		}
+		if totalDisk > 0 {
+			summary.StorageTotalTB = float64(totalDisk) / 1e12
+			summary.StorageUsedTB = float64(usedDisk) / 1e12
+			summary.StorageUsedPercent = (float64(usedDisk) / float64(totalDisk)) * 100.0
+		}
+
 		if node.MemUsedPercent > 90 {
 			summary.Status = "Degraded"
 		}
