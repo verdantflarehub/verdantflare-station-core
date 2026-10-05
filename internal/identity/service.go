@@ -49,6 +49,7 @@ type IdentityContext struct {
 	UserID            string    `json:"user_id"`
 	Username          string    `json:"username"`
 	OrganizationID    string    `json:"organization_id"`
+	OrganizationName  string    `json:"organization_name"`
 	Roles             []string  `json:"roles"`
 	Scopes            []string  `json:"scopes"`
 	IssuedAt          time.Time `json:"issued_at"`
@@ -108,7 +109,7 @@ func audit(ctx context.Context, tx pgx.Tx, requestID, action, outcome string, us
 	_, err = tx.Exec(ctx, "INSERT INTO station.audit_events(event_id,request_id,user_id,organization_id,session_id,action,outcome) VALUES($1,$2,$3,$4,$5,$6,$7)", id, requestID, user, org, session, action, outcome)
 	return err
 }
-func (s *Service) session(ctx context.Context, tx pgx.Tx, requestID, userID, username, org string, version, policy int64) (Session, error) {
+func (s *Service) session(ctx context.Context, tx pgx.Tx, requestID, userID, username, org, orgName string, version, policy int64) (Session, error) {
 	var out Session
 	id, err := newID()
 	if err != nil {
@@ -119,7 +120,7 @@ func (s *Service) session(ctx context.Context, tx pgx.Tx, requestID, userID, use
 		return out, err
 	}
 	now := time.Now().UTC()
-	out = Session{IdentityContext{requestID, s.StationID, id, userID, username, org, []string{"admin"}, append([]string(nil), adminScopes...), now, now.Add(s.SessionTTL), version, policy}, token}
+	out = Session{IdentityContext{requestID, s.StationID, id, userID, username, org, orgName, []string{"admin"}, append([]string(nil), adminScopes...), now, now.Add(s.SessionTTL), version, policy}, token}
 	_, err = tx.Exec(ctx, `INSERT INTO station.sessions(session_id,user_id,organization_id,token_hash,issued_at,expires_at,revocation_version) VALUES($1,$2,$3,$4,$5,$6,$7)`, id, userID, org, hash, now, out.ExpiresAt, version)
 	return out, err
 }
@@ -159,13 +160,14 @@ func (s *Service) Bootstrap(ctx context.Context, requestID string, in BootstrapR
 	if _, err = tx.Exec(ctx, "INSERT INTO station.users(user_id,username,password_hash) VALUES($1,$2,$3)", user, username, string(hash)); err != nil {
 		return out, err
 	}
-	if _, err = tx.Exec(ctx, "INSERT INTO station.organizations(organization_id,name) VALUES($1,$2)", org, strings.TrimSpace(in.OrganizationName)); err != nil {
+	orgName := strings.TrimSpace(in.OrganizationName)
+	if _, err = tx.Exec(ctx, "INSERT INTO station.organizations(organization_id,name) VALUES($1,$2)", org, orgName); err != nil {
 		return out, err
 	}
 	if _, err = tx.Exec(ctx, "INSERT INTO station.memberships(user_id,organization_id,role) VALUES($1,$2,'admin')", user, org); err != nil {
 		return out, err
 	}
-	out, err = s.session(ctx, tx, requestID, user, username, org, 0, 1)
+	out, err = s.session(ctx, tx, requestID, user, username, org, orgName, 0, 1)
 	if err != nil {
 		return out, err
 	}
@@ -244,9 +246,9 @@ func (s *Service) Login(ctx context.Context, requestID string, in LoginRequest) 
 		}
 		return deny(code)
 	}
-	var org string
+	var org, orgName string
 	var policy int64
-	err = tx.QueryRow(ctx, `SELECT o.organization_id::text,o.policy_version FROM station.memberships m JOIN station.organizations o USING(organization_id) WHERE m.user_id=$1 AND m.active AND m.role='admin' AND o.status='active' AND ($2='' OR o.organization_id::text=$2) ORDER BY o.created_at,o.organization_id LIMIT 1 FOR SHARE OF m,o`, user, in.OrganizationID).Scan(&org, &policy)
+	err = tx.QueryRow(ctx, `SELECT o.organization_id::text,o.name,o.policy_version FROM station.memberships m JOIN station.organizations o USING(organization_id) WHERE m.user_id=$1 AND m.active AND m.role='admin' AND o.status='active' AND ($2='' OR o.organization_id::text=$2) ORDER BY o.created_at,o.organization_id LIMIT 1 FOR SHARE OF m,o`, user, in.OrganizationID).Scan(&org, &orgName, &policy)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return deny(Denied)
 	}
@@ -256,7 +258,7 @@ func (s *Service) Login(ctx context.Context, requestID string, in LoginRequest) 
 	if _, err = tx.Exec(ctx, "UPDATE station.users SET failed_logins=0,locked_until=NULL WHERE user_id=$1", user); err != nil {
 		return out, err
 	}
-	out, err = s.session(ctx, tx, requestID, user, strings.ToLower(in.Username), org, version, policy)
+	out, err = s.session(ctx, tx, requestID, user, strings.ToLower(in.Username), org, orgName, version, policy)
 	if err != nil {
 		return out, err
 	}
@@ -285,9 +287,9 @@ func (s *Service) withSession(ctx context.Context, requestID, token, action stri
 	var userStatus, orgStatus, role string
 	var active bool
 	c := IdentityContext{RequestID: requestID, StationID: s.StationID}
-	err = tx.QueryRow(ctx, `SELECT se.session_id::text,se.user_id::text,u.username,se.organization_id::text,se.issued_at,se.expires_at,se.revocation_version,se.revoked_at,u.revocation_version,u.status,u.locked_until,o.status,o.policy_version,m.role,m.active
+	err = tx.QueryRow(ctx, `SELECT se.session_id::text,se.user_id::text,u.username,se.organization_id::text,o.name,se.issued_at,se.expires_at,se.revocation_version,se.revoked_at,u.revocation_version,u.status,u.locked_until,o.status,o.policy_version,m.role,m.active
  FROM station.sessions se JOIN station.users u USING(user_id) JOIN station.organizations o USING(organization_id) JOIN station.memberships m ON m.user_id=se.user_id AND m.organization_id=se.organization_id
- WHERE se.token_hash=$1 FOR UPDATE OF se FOR SHARE OF u,o,m`, sum[:]).Scan(&c.SessionID, &c.UserID, &c.Username, &c.OrganizationID, &c.IssuedAt, &c.ExpiresAt, &c.RevocationVersion, &revoked, &userVersion, &userStatus, &lockedUntil, &orgStatus, &c.PolicyVersion, &role, &active)
+ WHERE se.token_hash=$1 FOR UPDATE OF se FOR SHARE OF u,o,m`, sum[:]).Scan(&c.SessionID, &c.UserID, &c.Username, &c.OrganizationID, &c.OrganizationName, &c.IssuedAt, &c.ExpiresAt, &c.RevocationVersion, &revoked, &userVersion, &userStatus, &lockedUntil, &orgStatus, &c.PolicyVersion, &role, &active)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return out, Unauthenticated
 	}
