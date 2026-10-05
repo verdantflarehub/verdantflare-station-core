@@ -7,6 +7,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/jackc/pgx/v5"
 	"io"
 	"log/slog"
@@ -22,6 +23,7 @@ import (
 	"github.com/verdantflarehub/verdantflare-station-core/internal/catalog"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/identity"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/operations"
+	"github.com/verdantflarehub/verdantflare-station-core/internal/telemetry"
 	"github.com/verdantflarehub/verdantflare-station-core/migrations"
 )
 
@@ -54,6 +56,7 @@ type Server struct {
 	Logger         *slog.Logger
 	Catalog        *catalog.Service
 	Operations     *operations.Service
+	Telemetry      *telemetry.Service
 }
 type responseWriter struct {
 	http.ResponseWriter
@@ -206,7 +209,8 @@ func (s *Server) ServeHTTP(original http.ResponseWriter, r *http.Request) {
 		return
 	}
 	routes := map[string]string{
-		"/app-commands": "POST", "/healthz": "GET", "/readyz": "GET", "/identity/bootstrap": "POST", "/identity/login": "POST", "/identity/refresh": "POST", "/identity/logout": "POST", "/identity/me": "GET", "/identity/scopes": "GET", "/station/health": "GET"}
+		"/app-commands": "POST", "/healthz": "GET", "/readyz": "GET", "/identity/bootstrap": "POST", "/identity/login": "POST", "/identity/refresh": "POST", "/identity/logout": "POST", "/identity/me": "GET", "/identity/scopes": "GET", "/station/health": "GET",
+		"/api/v1/resources/gpu": "GET", "/api/v1/resources/node": "GET", "/api/v1/resources/summary": "GET"}
 	if strings.HasPrefix(r.URL.Path, "/app-operations/") || r.URL.Path == "/catalog/apps" || strings.HasPrefix(r.URL.Path, "/catalog/apps/") {
 		routes[r.URL.Path] = "GET"
 	}
@@ -339,6 +343,38 @@ func (s *Server) ServeHTTP(original http.ResponseWriter, r *http.Request) {
 		}
 		reply(w, 200, op)
 		return
+	}
+	if strings.HasPrefix(route, "/api/v1/resources/") {
+		if s.Telemetry == nil {
+			reply(w, 503, ErrorResponse{"SERVICE_UNAVAILABLE", "Telemetry service is not configured", requestID})
+			return
+		}
+		switch route {
+		case "/api/v1/resources/gpu":
+			gpus, e := s.Telemetry.GetGPUs(ctx)
+			if e != nil {
+				reply(w, 502, ErrorResponse{"BAD_GATEWAY", fmt.Sprintf("Failed to query GPU telemetry: %v", e), requestID})
+				return
+			}
+			reply(w, 200, map[string]any{"gpus": gpus, "request_id": requestID})
+			return
+		case "/api/v1/resources/node":
+			node, e := s.Telemetry.GetNode(ctx)
+			if e != nil {
+				reply(w, 502, ErrorResponse{"BAD_GATEWAY", fmt.Sprintf("Failed to query node telemetry: %v", e), requestID})
+				return
+			}
+			reply(w, 200, map[string]any{"node": node, "request_id": requestID})
+			return
+		case "/api/v1/resources/summary":
+			summary, e := s.Telemetry.GetSummary(ctx)
+			if e != nil {
+				reply(w, 502, ErrorResponse{"BAD_GATEWAY", fmt.Sprintf("Failed to query resource summary: %v", e), requestID})
+				return
+			}
+			reply(w, 200, map[string]any{"summary": summary, "request_id": requestID})
+			return
+		}
 	}
 	if route == "/catalog/apps" || strings.HasPrefix(route, "/catalog/apps/") {
 		s.serveCatalog(w, r, ctx, requestID, user)
