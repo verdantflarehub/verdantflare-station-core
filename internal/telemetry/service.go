@@ -152,17 +152,36 @@ func (s *Service) GetGPUs(ctx context.Context) ([]GPUMetric, error) {
 		gpusMap[r.Metric["UUID"]] = m
 	}
 
+	// Used VRAM
+	if usedResp, err := s.queryVector(ctx, "DCGM_FI_DEV_FB_USED"); err == nil {
+		for _, r := range usedResp.Data.Result {
+			if m, ok := gpusMap[r.Metric["UUID"]]; ok {
+				val, _ := parseValue(r.Value)
+				m.UsedVRAMMB = int64(val)
+			}
+		}
+	}
+
 	// Total VRAM
-	if totalResp, err := s.queryVector(ctx, "DCGM_FI_DEV_FB_TOTAL"); err == nil {
+	if totalResp, err := s.queryVector(ctx, "DCGM_FI_DEV_FB_TOTAL"); err == nil && len(totalResp.Data.Result) > 0 {
 		for _, r := range totalResp.Data.Result {
 			if m, ok := gpusMap[r.Metric["UUID"]]; ok {
 				val, _ := parseValue(r.Value)
 				m.TotalVRAMMB = int64(val)
-				m.UsedVRAMMB = m.TotalVRAMMB - m.FreeVRAMMB
-				if m.UsedVRAMMB < 0 {
-					m.UsedVRAMMB = 0
-				}
 			}
+		}
+	}
+
+	for _, m := range gpusMap {
+		if m.TotalVRAMMB == 0 {
+			if m.FreeVRAMMB+m.UsedVRAMMB > 0 {
+				m.TotalVRAMMB = m.FreeVRAMMB + m.UsedVRAMMB
+			} else {
+				m.TotalVRAMMB = 32768
+			}
+		}
+		if m.UsedVRAMMB == 0 && m.TotalVRAMMB > m.FreeVRAMMB {
+			m.UsedVRAMMB = m.TotalVRAMMB - m.FreeVRAMMB
 		}
 	}
 
