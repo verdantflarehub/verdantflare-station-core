@@ -641,27 +641,41 @@ func (s *Service) GetWorkloads(ctx context.Context) (*WorkloadsResponse, error) 
 		}
 
 		lowerName := strings.ToLower(p.Name)
-		if strings.Contains(lowerName, "image-mcp") {
-			m.DisplayName = "image-mcp-server"
+		gpuReqCount := 0
+		if p.GPUReq != "" {
+			if count, err := strconv.Atoi(p.GPUReq); err == nil {
+				gpuReqCount = count
+			}
+		} else if p.GPULim != "" {
+			if count, err := strconv.Atoi(p.GPULim); err == nil {
+				gpuReqCount = count
+			}
+		}
+
+		if strings.Contains(lowerName, "minimax") {
+			m.DisplayName = "video-minimax-h3-singularity"
 			m.Type = "gpu"
 			m.GPUCountReq = 1
+			if gpuReqCount > 0 {
+				m.GPUCountReq = gpuReqCount
+			}
 			m.GPUIndex = 0
-			m.ModelName = "Flux.1-Dev (FP8)"
-			m.MountPoint = "/data/models/flux"
+			m.ModelName = "MiniMax-H3 大模型引擎"
+			m.MountPoint = "/models/MiniMax-H3"
+		} else if strings.Contains(lowerName, "image-mcp") {
+			m.DisplayName = "image-mcp-server"
+			m.Type = "infra"
+			m.GPUCountReq = gpuReqCount
+			m.GPUIndex = -1
+			m.ModelName = "Flux.1 / SD-Forge API 调度"
+			m.MountPoint = "/data/projects/image"
 		} else if strings.Contains(lowerName, "video-mcp") {
 			m.DisplayName = "video-mcp-server"
-			m.Type = "gpu"
-			m.GPUCountReq = 1
-			m.GPUIndex = 1
-			m.ModelName = "Wan 2.1 任务分派器"
-			m.MountPoint = "/data/artifacts/video"
-		} else if strings.Contains(lowerName, "minimax") {
-			m.DisplayName = "video-minimax-h3-singularity"
 			m.Type = "infra"
-			m.GPUCountReq = 0
+			m.GPUCountReq = gpuReqCount
 			m.GPUIndex = -1
-			m.ModelName = "MiniMax-H3 大模型引擎"
-			m.MountPoint = "/data/models/minimax"
+			m.ModelName = "Wan 2.1 任务分派器"
+			m.MountPoint = "/data/projects/video"
 		} else if strings.Contains(lowerName, "station-core") {
 			m.DisplayName = "station-core"
 			m.Type = "infra"
@@ -748,74 +762,14 @@ func buildDefaultWorkloads(gpus []GPUMetric) *WorkloadsResponse {
 	resp := &WorkloadsResponse{
 		Summary: WorkloadSummary{
 			TotalPods:        5,
-			GPUPods:          2,
-			InfraPods:        3,
-			TotalGPUAssigned: 2,
-			TotalVRAMUsedMB:  5939,
-			TotalCPUReqM:     18700,
-			TotalMemReqMB:    98200,
+			GPUPods:          1,
+			InfraPods:        4,
+			TotalGPUAssigned: 1,
+			TotalVRAMUsedMB:  5972,
+			TotalCPUReqM:     17800,
+			TotalMemReqMB:    100224,
 		},
 		Workloads: []WorkloadMetric{
-			{
-				Name:              "image-mcp-server",
-				Namespace:         "verdantflare-image",
-				PodName:           "image-mcp-server-b8fc748cc-8rq6s",
-				NodeName:          "verdentflare-5090",
-				Status:            "Running",
-				Ready:             true,
-				Age:               "16小时",
-				Type:              "gpu",
-				DisplayName:       "image-mcp-server",
-				GPUCountReq:       1,
-				GPUIndex:          0,
-				GPUDevice:         "NVIDIA GeForce RTX 5090 · 32GB",
-				GPUVRAMUsedMB:     5939,
-				GPUVRAMTotalMB:    32768,
-				GPUVRAMPercent:    18.1,
-				GPUUtil:           4.0,
-				GPUTempC:          48.0,
-				GPUPowerWatts:     23.0,
-				CPUReqMillicores:  500,
-				CPULimMillicores:  2000,
-				CPUUsedMillicores: 2,
-				CPUUsedPercent:    0.1,
-				MemReqBytes:       536870912,
-				MemLimBytes:       2147483648,
-				MemUsedBytes:      113246208,
-				MemUsedPercent:    5.3,
-				ModelName:         "Flux.1-Dev (FP8)",
-				MountPoint:        "/data/models/flux",
-			},
-			{
-				Name:              "video-mcp-server",
-				Namespace:         "verdantflare-video",
-				PodName:           "video-mcp-server-77b6c9fcfc-qbmcf",
-				NodeName:          "verdentflare-5090",
-				Status:            "Running",
-				Ready:             true,
-				Age:               "24小时",
-				Type:              "gpu",
-				DisplayName:       "video-mcp-server",
-				GPUCountReq:       1,
-				GPUIndex:          1,
-				GPUDevice:         "NVIDIA GeForce RTX 5090 · 32GB",
-				GPUVRAMUsedMB:     0,
-				GPUVRAMTotalMB:    32768,
-				GPUVRAMPercent:    0.0,
-				GPUUtil:           0.0,
-				GPUTempC:          41.0,
-				GPUPowerWatts:     5.0,
-				CPUReqMillicores:  1000,
-				CPULimMillicores:  4000,
-				CPUUsedMillicores: 6,
-				CPUUsedPercent:    0.15,
-				MemReqBytes:       1073741824,
-				MemLimBytes:       4294967296,
-				MemUsedBytes:      109051904,
-				MemUsedPercent:    2.5,
-				ModelName:         "Wan 2.1 任务分派器",
-				MountPoint:        "/data/artifacts/video",
-			},
 			{
 				Name:              "video-minimax-h3-singularity",
 				Namespace:         "verdantflare-video",
@@ -824,10 +778,17 @@ func buildDefaultWorkloads(gpus []GPUMetric) *WorkloadsResponse {
 				Status:            "Running",
 				Ready:             true,
 				Age:               "2天8小时",
-				Type:              "infra",
+				Type:              "gpu",
 				DisplayName:       "video-minimax-h3-singularity",
-				GPUCountReq:       0,
-				GPUIndex:          -1,
+				GPUCountReq:       1,
+				GPUIndex:          0,
+				GPUDevice:         "NVIDIA GeForce RTX 5090 · 32GB",
+				GPUVRAMUsedMB:     5972,
+				GPUVRAMTotalMB:    32768,
+				GPUVRAMPercent:    18.3,
+				GPUUtil:           0.0,
+				GPUTempC:          48.0,
+				GPUPowerWatts:     22.0,
 				CPUReqMillicores:  16000,
 				CPULimMillicores:  32000,
 				CPUUsedMillicores: 4,
@@ -837,7 +798,53 @@ func buildDefaultWorkloads(gpus []GPUMetric) *WorkloadsResponse {
 				MemUsedBytes:      9627795456,
 				MemUsedPercent:    9.5,
 				ModelName:         "MiniMax-H3 大模型引擎",
-				MountPoint:        "/data/models/minimax",
+				MountPoint:        "/models/MiniMax-H3",
+			},
+			{
+				Name:              "image-mcp-server",
+				Namespace:         "verdantflare-image",
+				PodName:           "image-mcp-server-b8fc748cc-8rq6s",
+				NodeName:          "verdentflare-5090",
+				Status:            "Running",
+				Ready:             true,
+				Age:               "16小时",
+				Type:              "infra",
+				DisplayName:       "image-mcp-server",
+				GPUCountReq:       0,
+				GPUIndex:          -1,
+				CPUReqMillicores:  500,
+				CPULimMillicores:  2000,
+				CPUUsedMillicores: 2,
+				CPUUsedPercent:    0.1,
+				MemReqBytes:       536870912,
+				MemLimBytes:       2147483648,
+				MemUsedBytes:      129000000,
+				MemUsedPercent:    6.0,
+				ModelName:         "Flux.1 / SD-Forge API 调度",
+				MountPoint:        "/data/projects/image",
+			},
+			{
+				Name:              "video-mcp-server",
+				Namespace:         "verdantflare-video",
+				PodName:           "video-mcp-server-77b6c9fcfc-qbmcf",
+				NodeName:          "verdentflare-5090",
+				Status:            "Running",
+				Ready:             true,
+				Age:               "24小时",
+				Type:              "infra",
+				DisplayName:       "video-mcp-server",
+				GPUCountReq:       0,
+				GPUIndex:          -1,
+				CPUReqMillicores:  1000,
+				CPULimMillicores:  4000,
+				CPUUsedMillicores: 4,
+				CPUUsedPercent:    0.1,
+				MemReqBytes:       1073741824,
+				MemLimBytes:       4294967296,
+				MemUsedBytes:      109051904,
+				MemUsedPercent:    2.5,
+				ModelName:         "Wan 2.1 任务分派器",
+				MountPoint:        "/data/projects/video",
 			},
 			{
 				Name:              "station-core",
