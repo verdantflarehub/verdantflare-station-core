@@ -210,7 +210,7 @@ func (s *Server) ServeHTTP(original http.ResponseWriter, r *http.Request) {
 	}
 	routes := map[string]string{
 		"/app-commands": "POST", "/healthz": "GET", "/readyz": "GET", "/identity/bootstrap": "POST", "/identity/login": "POST", "/identity/refresh": "POST", "/identity/logout": "POST", "/identity/me": "GET", "/identity/scopes": "GET", "/station/health": "GET",
-		"/api/v1/resources/gpu": "GET", "/api/v1/resources/node": "GET", "/api/v1/resources/summary": "GET"}
+		"/api/v1/resources/gpu": "GET", "/api/v1/resources/node": "GET", "/api/v1/resources/summary": "GET", "/api/v1/resources/workloads": "GET"}
 	if strings.HasPrefix(r.URL.Path, "/app-operations/") || r.URL.Path == "/catalog/apps" || strings.HasPrefix(r.URL.Path, "/catalog/apps/") {
 		routes[r.URL.Path] = "GET"
 	}
@@ -373,6 +373,14 @@ func (s *Server) ServeHTTP(original http.ResponseWriter, r *http.Request) {
 				return
 			}
 			reply(w, 200, map[string]any{"summary": summary, "request_id": requestID})
+			return
+		case "/api/v1/resources/workloads":
+			workloads, e := s.Telemetry.GetWorkloads(ctx)
+			if e != nil {
+				reply(w, 502, ErrorResponse{"BAD_GATEWAY", fmt.Sprintf("Failed to query workloads telemetry: %v", e), requestID})
+				return
+			}
+			reply(w, 200, map[string]any{"workloads": workloads.Workloads, "summary": workloads.Summary, "updated_at": workloads.UpdatedAt, "request_id": requestID})
 			return
 		}
 	}

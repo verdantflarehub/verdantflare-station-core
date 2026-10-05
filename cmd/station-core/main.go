@@ -82,17 +82,21 @@ func run() int {
 		return 1
 	}
 	var appCatalog *catalog.Service
+	var k8sReader *catalog.Kubernetes
 	if path := os.Getenv("STATION_CATALOG_FILE"); path != "" {
 		reader, e := catalog.NewKubernetes(os.Getenv("STATION_KUBECONFIG"))
 		if e != nil {
 			logger.Error("catalog_kubernetes_configuration_invalid")
 			return 1
 		}
+		k8sReader = reader
 		appCatalog, e = catalog.Load(path, reader)
 		if e != nil {
 			logger.Error("catalog_configuration_invalid")
 			return 1
 		}
+	} else {
+		k8sReader, _ = catalog.NewKubernetes(os.Getenv("STATION_KUBECONFIG"))
 	}
 	ops := &operations.Service{Pool: pool, Catalog: appCatalog, StationID: c.StationID}
 	if target := os.Getenv("STATION_RUNTIME_TARGET"); target != "" {
@@ -113,6 +117,9 @@ func run() int {
 		telemetryURL = "http://prometheus.verdantflare-station.svc.cluster.local:9090"
 	}
 	telemetryService := telemetry.NewService(telemetryURL, 2*time.Second)
+	if k8sReader != nil {
+		telemetryService.SetKubernetes(k8sReader)
+	}
 
 	server := &http.Server{Addr: c.Listen, Handler: &gateway.Server{Identity: service, BootstrapToken: c.BootstrapToken, Logger: logger, Catalog: appCatalog, Operations: ops, Telemetry: telemetryService}, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	done := make(chan error, 1)
