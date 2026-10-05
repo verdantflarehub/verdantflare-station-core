@@ -600,12 +600,6 @@ func (s *Service) GetWorkloads(ctx context.Context) (*WorkloadsResponse, error) 
 	}
 	s.mu.RUnlock()
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if time.Since(s.lastWlAt) < s.ttl && s.cachedWls != nil {
-		return s.cachedWls, nil
-	}
-
 	gpus, _ := s.GetGPUs(ctx)
 
 	var rawPods []catalog.RawPodItem
@@ -743,8 +737,10 @@ func (s *Service) GetWorkloads(ctx context.Context) (*WorkloadsResponse, error) 
 		resp = buildDefaultWorkloads(gpus)
 	}
 
+	s.mu.Lock()
 	s.lastWlAt = time.Now()
 	s.cachedWls = resp
+	s.mu.Unlock()
 	return resp, nil
 }
 
