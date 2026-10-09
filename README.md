@@ -70,7 +70,7 @@ release rules must preserve the authorized fast-forward promotion route.
 
 Set `STATION_CATALOG_FILE` to the generated central `catalog.json` snapshot to
 serve authenticated `GET /catalog/apps` and `GET /catalog/apps/{app_id}`.
-`group_id=image|music|video` is the optional list filter. Configuration and response
+`group_id=image|music|video|blender` is the optional list filter. Configuration and response
 contracts live in [the central catalog design](../docs/design/station/08-app-catalog-implementation.md).
 
 Kubernetes access uses the Pod ServiceAccount by default; local runs explicitly set

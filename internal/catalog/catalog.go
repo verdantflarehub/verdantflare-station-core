@@ -103,7 +103,9 @@ func Load(path string, reader Reader) (*Service, error) {
 	}
 	return &Service{entries, reader, disc}, nil
 }
-func ValidGroup(group string) bool { return group == "image" || group == "music" || group == "video" }
+func ValidGroup(group string) bool {
+	return group == "image" || group == "music" || group == "video" || group == "blender"
+}
 func (s *Service) observe(ctx context.Context, e Entry) Item {
 	obs := Observation{State: "unknown", Reason: "unavailable", ObservedAt: time.Now().UTC(), Images: []Image{}}
 	if s.reader != nil {
