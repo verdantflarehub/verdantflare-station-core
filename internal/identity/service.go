@@ -272,8 +272,7 @@ func (s *Service) Login(ctx context.Context, requestID string, in LoginRequest) 
 // reads current user, membership and organization state; no client claims are trusted.
 func (s *Service) withSession(ctx context.Context, requestID, token, action string) (Session, error) {
 	var out Session
-	raw, err := base64.RawURLEncoding.DecodeString(token)
-	if err != nil || len(raw) != 32 {
+	if !validBearerToken(token) {
 		return out, Unauthenticated
 	}
 	sum := sha256.Sum256([]byte(token))
@@ -284,12 +283,12 @@ func (s *Service) withSession(ctx context.Context, requestID, token, action stri
 	defer tx.Rollback(context.Background())
 	var revoked, lockedUntil *time.Time
 	var userVersion int64
-	var userStatus, orgStatus, role string
+	var userStatus, orgStatus, role, kind string
 	var active bool
 	c := IdentityContext{RequestID: requestID, StationID: s.StationID}
-	err = tx.QueryRow(ctx, `SELECT se.session_id::text,se.user_id::text,u.username,se.organization_id::text,o.name,se.issued_at,se.expires_at,se.revocation_version,se.revoked_at,u.revocation_version,u.status,u.locked_until,o.status,o.policy_version,m.role,m.active
+	err = tx.QueryRow(ctx, `SELECT se.session_id::text,se.user_id::text,u.username,se.organization_id::text,o.name,se.issued_at,se.expires_at,se.revocation_version,se.revoked_at,u.revocation_version,u.status,u.locked_until,o.status,o.policy_version,m.role,m.active,se.credential_kind
  FROM station.sessions se JOIN station.users u USING(user_id) JOIN station.organizations o USING(organization_id) JOIN station.memberships m ON m.user_id=se.user_id AND m.organization_id=se.organization_id
- WHERE se.token_hash=$1 FOR UPDATE OF se FOR SHARE OF u,o,m`, sum[:]).Scan(&c.SessionID, &c.UserID, &c.Username, &c.OrganizationID, &c.OrganizationName, &c.IssuedAt, &c.ExpiresAt, &c.RevocationVersion, &revoked, &userVersion, &userStatus, &lockedUntil, &orgStatus, &c.PolicyVersion, &role, &active)
+ WHERE se.token_hash=$1 FOR UPDATE OF se FOR SHARE OF u,o,m`, sum[:]).Scan(&c.SessionID, &c.UserID, &c.Username, &c.OrganizationID, &c.OrganizationName, &c.IssuedAt, &c.ExpiresAt, &c.RevocationVersion, &revoked, &userVersion, &userStatus, &lockedUntil, &orgStatus, &c.PolicyVersion, &role, &active, &kind)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return out, Unauthenticated
 	}
@@ -329,6 +328,9 @@ func (s *Service) withSession(ctx context.Context, requestID, token, action stri
 	out.IdentityContext = c
 	switch action {
 	case "refresh":
+		if kind == "mcp" {
+			return deny(Denied)
+		}
 		value, hash, e := newToken()
 		if e != nil {
 			return out, e

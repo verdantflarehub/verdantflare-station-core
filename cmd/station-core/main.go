@@ -38,8 +38,8 @@ func run() int {
 	if len(os.Args) > 1 {
 		mode = os.Args[1]
 	}
-	if len(os.Args) > 2 || (mode != "serve" && mode != "migrate") {
-		logger.Error("usage", "command", "station-core [serve|migrate]")
+	if len(os.Args) > 2 || (mode != "serve" && mode != "migrate" && mode != "bind-mcp-token") {
+		logger.Error("usage", "command", "station-core [serve|migrate|bind-mcp-token]")
 		return 1
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -80,6 +80,21 @@ func run() int {
 	if err != nil {
 		logger.Error("identity_initialization_failed")
 		return 1
+	}
+	if mode == "bind-mcp-token" {
+		expires, err := time.Parse(time.RFC3339, os.Getenv("STATION_MCP_TOKEN_EXPIRES_AT"))
+		if err != nil {
+			logger.Error("mcp_token_configuration_invalid", "field", "STATION_MCP_TOKEN_EXPIRES_AT")
+			return 1
+		}
+		bound, err := service.BindMCPToken(checkCtx, "operator-bind-mcp-token", os.Getenv("STATION_MCP_TOKEN"), os.Getenv("STATION_MCP_USER_ID"), os.Getenv("STATION_MCP_ORGANIZATION_ID"), expires)
+		if err != nil {
+			// Database error text may contain parameters. Never log it.
+			logger.Error("mcp_token_binding_failed")
+			return 1
+		}
+		logger.Info("mcp_token_bound", "session_id", bound.SessionID, "expires_at", bound.ExpiresAt)
+		return 0
 	}
 	var appCatalog *catalog.Service
 	var k8sReader *catalog.Kubernetes
