@@ -28,7 +28,7 @@ import (
 	"github.com/verdantflarehub/verdantflare-station-core/migrations"
 )
 
-const Version = "0.3.17"
+const Version = "0.3.18"
 
 var requestIDPattern = regexp.MustCompile(`^[a-zA-Z0-9._:-]{1,128}$`)
 
@@ -58,6 +58,7 @@ type Server struct {
 	Catalog        *catalog.Service
 	Operations     *operations.Service
 	Telemetry      *telemetry.Service
+	BlenderControl *BlenderControl
 	Egress         *egress.Service
 }
 type responseWriter struct {
@@ -216,7 +217,13 @@ func (s *Server) ServeHTTP(original http.ResponseWriter, r *http.Request) {
 		return
 	}
 	routes := map[string]string{
-		"/app-commands": "POST", "/healthz": "GET", "/readyz": "GET", "/identity/bootstrap": "POST", "/identity/login": "POST", "/identity/refresh": "POST", "/identity/logout": "POST", "/identity/me": "GET", "/identity/scopes": "GET", "/station/health": "GET",
+		"/internal/v1/blender/create":  "POST",
+		"/internal/v1/blender/start":   "POST",
+		"/internal/v1/blender/stop":    "POST",
+		"/internal/v1/blender/destroy": "POST",
+		"/internal/v1/blender/access":  "POST",
+		"/internal/v1/blender/options": "POST",
+		"/app-commands":                "POST", "/healthz": "GET", "/readyz": "GET", "/identity/bootstrap": "POST", "/identity/login": "POST", "/identity/refresh": "POST", "/identity/logout": "POST", "/identity/me": "GET", "/identity/scopes": "GET", "/station/health": "GET",
 		"/api/v1/resources/gpu": "GET", "/api/v1/resources/node": "GET", "/api/v1/resources/summary": "GET", "/api/v1/resources/workloads": "GET"}
 	if strings.HasPrefix(r.URL.Path, "/app-operations/") || r.URL.Path == "/catalog/apps" || strings.HasPrefix(r.URL.Path, "/catalog/apps/") {
 		routes[r.URL.Path] = "GET"
@@ -235,6 +242,24 @@ func (s *Server) ServeHTTP(original http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	switch route {
+	case "/internal/v1/blender/options":
+		s.blenderOptions(w, r, requestID)
+		return
+	case "/internal/v1/blender/create":
+		s.blenderCreate(w, r, requestID)
+		return
+	case "/internal/v1/blender/start":
+		s.blenderStart(w, r, requestID)
+		return
+	case "/internal/v1/blender/stop":
+		s.blenderStop(w, r, requestID)
+		return
+	case "/internal/v1/blender/destroy":
+		s.blenderDestroy(w, r, requestID)
+		return
+	case "/internal/v1/blender/access":
+		s.blenderAccess(w, r, requestID)
+		return
 	case "/healthz":
 		reply(w, 200, Probe{"Alive", Version, migrations.ContractsMajor, migrations.Version, requestID})
 		return

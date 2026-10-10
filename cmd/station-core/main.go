@@ -138,6 +138,11 @@ func run() int {
 		telemetryService.SetKubernetes(k8sReader)
 	}
 
+	blenderControl, err := gateway.NewBlenderControl(os.Getenv("STATION_BLENDER_CONTROL_TOKEN"), os.Getenv("STATION_INSTANCE_RUNTIME_URL"), os.Getenv("STATION_INSTANCE_CONTROL_TOKEN"))
+	if err != nil {
+		logger.Error("invalid_blender_control_configuration")
+		return 1
+	}
 	var egressService *egress.Service
 	if encoded := os.Getenv("STATION_EGRESS_ENCRYPTION_KEY"); encoded != "" {
 		key, decodeErr := base64.StdEncoding.DecodeString(encoded)
@@ -152,7 +157,7 @@ func run() int {
 			return 1
 		}
 	}
-	server := &http.Server{Addr: c.Listen, Handler: &gateway.Server{Identity: service, BootstrapToken: c.BootstrapToken, Logger: logger, Catalog: appCatalog, Operations: ops, Telemetry: telemetryService, Egress: egressService}, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 65 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
+	server := &http.Server{Addr: c.Listen, Handler: &gateway.Server{Identity: service, BootstrapToken: c.BootstrapToken, Logger: logger, Catalog: appCatalog, Operations: ops, Telemetry: telemetryService, BlenderControl: blenderControl, Egress: egressService}, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 65 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	done := make(chan error, 1)
 	go func() { done <- server.ListenAndServe() }()
 	logger.Info("station_core_starting", "version", gateway.Version, "station_id", c.StationID, "listen", c.Listen, "contracts_major", migrations.ContractsMajor, "migration_version", migrations.Version, "session_ttl", c.SessionTTL.String(), "login_failure_limit", 5, "account_lock_duration", "15m", "log_level", c.LogLevel)
