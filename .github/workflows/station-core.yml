@@ -3,7 +3,7 @@ name: Station Core
 env:
   IMAGE_NAME: wod/verdantflare-station
   SERVICE: station-core
-  VERSION: 0.3.18
+  VERSION: 0.3.19
 
 on:
   push:

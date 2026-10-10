@@ -99,6 +99,7 @@ type WorkloadsResponse struct {
 	SchemaVersion int              `json:"schema_version"`
 	Summary       WorkloadSummary  `json:"summary"`
 	Workloads     []WorkloadMetric `json:"workloads"`
+	GPUSamples    []GPUUsageSample `json:"gpu_samples,omitempty"`
 	UpdatedAt     string           `json:"updated_at"` // Configuration observation, never metric time.
 }
 
@@ -136,6 +137,7 @@ type promResponse struct {
 		Result     []struct {
 			Metric map[string]string `json:"metric"`
 			Value  []interface{}     `json:"value"`
+			Values [][]interface{}   `json:"values"`
 		} `json:"result"`
 	} `json:"data"`
 }

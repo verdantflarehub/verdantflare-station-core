@@ -72,6 +72,7 @@ func (s *Service) GetWorkloads(ctx context.Context) (*WorkloadsResponse, error) 
 	}
 	now := time.Now().UTC()
 	out := &WorkloadsResponse{SchemaVersion: 2, Workloads: []WorkloadMetric{}, UpdatedAt: observed.Format(time.RFC3339Nano)}
+	out.GPUSamples = s.gpuUsageSamples(ctx, now)
 	for _, pod := range pods {
 		if !strings.HasPrefix(pod.Namespace, "verdantflare-") {
 			continue

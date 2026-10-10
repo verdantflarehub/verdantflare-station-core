@@ -20,6 +20,7 @@ func TestService_GetSummary(t *testing.T) {
 			resp.Data.Result = []struct {
 				Metric map[string]string `json:"metric"`
 				Value  []interface{}     `json:"value"`
+				Values [][]interface{}   `json:"values"`
 			}{
 				{
 					Metric: map[string]string{
@@ -35,6 +36,7 @@ func TestService_GetSummary(t *testing.T) {
 			resp.Data.Result = []struct {
 				Metric map[string]string `json:"metric"`
 				Value  []interface{}     `json:"value"`
+				Values [][]interface{}   `json:"values"`
 			}{
 				{
 					Metric: map[string]string{"UUID": "GPU-0"},
@@ -45,6 +47,7 @@ func TestService_GetSummary(t *testing.T) {
 			resp.Data.Result = []struct {
 				Metric map[string]string `json:"metric"`
 				Value  []interface{}     `json:"value"`
+				Values [][]interface{}   `json:"values"`
 			}{
 				{
 					Metric: map[string]string{"UUID": "GPU-0"},
@@ -55,6 +58,7 @@ func TestService_GetSummary(t *testing.T) {
 			resp.Data.Result = []struct {
 				Metric map[string]string `json:"metric"`
 				Value  []interface{}     `json:"value"`
+				Values [][]interface{}   `json:"values"`
 			}{
 				{
 					Metric: map[string]string{"UUID": "GPU-0"},
@@ -65,6 +69,7 @@ func TestService_GetSummary(t *testing.T) {
 			resp.Data.Result = []struct {
 				Metric map[string]string `json:"metric"`
 				Value  []interface{}     `json:"value"`
+				Values [][]interface{}   `json:"values"`
 			}{
 				{
 					Metric: map[string]string{"UUID": "GPU-0"},
