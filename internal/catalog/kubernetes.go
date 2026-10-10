@@ -155,163 +155,117 @@ func (k *Kubernetes) Observe(ctx context.Context, e Entry) Observation {
 	return observationFromDeployment(&d)
 }
 
-// RawPodItem represents minimal pod metadata, spec and status for workload telemetry.
+// RawPodItem preserves workload identity and every regular container.
+type RawContainer struct {
+	Name                                           string
+	CPUReq, CPULim, MemReq, MemLim, GPUReq, GPULim string
+	Ready                                          bool
+	RestartCount                                   int32
+}
 type RawPodItem struct {
-	Name         string            `json:"name"`
-	Namespace    string            `json:"namespace"`
-	NodeName     string            `json:"node_name"`
-	Phase        string            `json:"phase"`
-	StartTime    string            `json:"start_time"`
-	Ready        bool              `json:"ready"`
-	RestartCount int32             `json:"restart_count"`
-	Labels       map[string]string `json:"labels"`
-	CPUReq       string            `json:"cpu_req"`
-	CPULim       string            `json:"cpu_lim"`
-	MemReq       string            `json:"mem_req"`
-	MemLim       string            `json:"mem_lim"`
-	GPUReq       string            `json:"gpu_req"`
-	GPULim       string            `json:"gpu_lim"`
-	Image        string            `json:"image"`
+	UID, Name, Namespace, NodeName, Phase, StartTime, CreatedAt string
+	Labels                                                      map[string]string
+	Containers                                                  []RawContainer
 }
-
-// RawPodMetricItem represents real-time CPU & memory metrics from metrics-server.
 type RawPodMetricItem struct {
-	Name      string `json:"name"`
-	Namespace string `json:"namespace"`
-	CPUUsage  string `json:"cpu_usage"`
-	MemUsage  string `json:"mem_usage"`
+	UID, Name, Namespace, Container, Timestamp, Window, CPUUsage, MemUsage string
 }
 
-// ListPods queries pods across all namespaces from Kubernetes API.
+func (k *Kubernetes) telemetryList(ctx context.Context, path string, out any) error {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, k.baseURL+path, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := k.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("kubernetes telemetry status %d", resp.StatusCode)
+	}
+	decoder := json.NewDecoder(io.LimitReader(resp.Body, 8<<20))
+	if err := decoder.Decode(out); err != nil {
+		return err
+	}
+	if decoder.Decode(new(any)) != io.EOF {
+		return fmt.Errorf("invalid telemetry response")
+	}
+	return nil
+}
+
 func (k *Kubernetes) ListPods(ctx context.Context) ([]RawPodItem, error) {
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, k.baseURL+"/api/v1/pods", nil)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := k.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("kubernetes pods status %d", resp.StatusCode)
-	}
-
 	var list struct {
 		Items []struct {
 			Metadata struct {
-				Name      string            `json:"name"`
-				Namespace string            `json:"namespace"`
-				Labels    map[string]string `json:"labels"`
-			} `json:"metadata"`
+				UID, Name, Namespace string
+				CreationTimestamp    string
+				Labels               map[string]string
+			}
 			Spec struct {
-				NodeName   string `json:"nodeName"`
+				NodeName   string
 				Containers []struct {
-					Name      string `json:"name"`
-					Image     string `json:"image"`
-					Resources struct {
-						Requests map[string]string `json:"requests"`
-						Limits   map[string]string `json:"limits"`
-					} `json:"resources"`
-				} `json:"containers"`
-			} `json:"spec"`
+					Name      string
+					Resources struct{ Requests, Limits map[string]string }
+				}
+			}
 			Status struct {
-				Phase             string `json:"phase"`
-				StartTime         string `json:"startTime"`
+				Phase, StartTime  string
 				ContainerStatuses []struct {
-					Ready        bool  `json:"ready"`
-					RestartCount int32 `json:"restartCount"`
-				} `json:"containerStatuses"`
-			} `json:"status"`
-		} `json:"items"`
+					Name         string
+					Ready        bool
+					RestartCount int32
+				}
+			}
+		}
 	}
-
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&list); err != nil {
+	if err := k.telemetryList(ctx, "/api/v1/pods", &list); err != nil {
 		return nil, err
 	}
-
-	var results []RawPodItem
+	out := make([]RawPodItem, 0, len(list.Items))
 	for _, item := range list.Items {
-		pod := RawPodItem{
-			Name:         item.Metadata.Name,
-			Namespace:    item.Metadata.Namespace,
-			NodeName:     item.Spec.NodeName,
-			Phase:        item.Status.Phase,
-			StartTime:    item.Status.StartTime,
-			Labels:       item.Metadata.Labels,
-		}
-		if len(item.Status.ContainerStatuses) > 0 {
-			pod.Ready = item.Status.ContainerStatuses[0].Ready
-			pod.RestartCount = item.Status.ContainerStatuses[0].RestartCount
-		}
-		if len(item.Spec.Containers) > 0 {
-			c := item.Spec.Containers[0]
-			pod.Image = c.Image
-			if c.Resources.Requests != nil {
-				pod.CPUReq = c.Resources.Requests["cpu"]
-				pod.MemReq = c.Resources.Requests["memory"]
-				pod.GPUReq = c.Resources.Requests["nvidia.com/gpu"]
+		pod := RawPodItem{UID: item.Metadata.UID, Name: item.Metadata.Name, Namespace: item.Metadata.Namespace,
+			NodeName: item.Spec.NodeName, Phase: item.Status.Phase, StartTime: item.Status.StartTime,
+			CreatedAt: item.Metadata.CreationTimestamp, Labels: item.Metadata.Labels, Containers: []RawContainer{}}
+		for _, c := range item.Spec.Containers {
+			rc := RawContainer{Name: c.Name, CPUReq: c.Resources.Requests["cpu"], CPULim: c.Resources.Limits["cpu"],
+				MemReq: c.Resources.Requests["memory"], MemLim: c.Resources.Limits["memory"],
+				GPUReq: c.Resources.Requests["nvidia.com/gpu"], GPULim: c.Resources.Limits["nvidia.com/gpu"]}
+			for _, status := range item.Status.ContainerStatuses {
+				if status.Name == c.Name {
+					rc.Ready = status.Ready
+					rc.RestartCount = status.RestartCount
+				}
 			}
-			if c.Resources.Limits != nil {
-				pod.CPULim = c.Resources.Limits["cpu"]
-				pod.MemLim = c.Resources.Limits["memory"]
-				pod.GPULim = c.Resources.Limits["nvidia.com/gpu"]
-			}
+			pod.Containers = append(pod.Containers, rc)
 		}
-		results = append(results, pod)
+		out = append(out, pod)
 	}
-	return results, nil
+	return out, nil
 }
 
-// ListPodMetrics queries real-time CPU & memory metrics from metrics.k8s.io.
 func (k *Kubernetes) ListPodMetrics(ctx context.Context) ([]RawPodMetricItem, error) {
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, k.baseURL+"/apis/metrics.k8s.io/v1beta1/pods", nil)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := k.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("kubernetes pod metrics status %d", resp.StatusCode)
-	}
-
 	var list struct {
 		Items []struct {
-			Metadata struct {
-				Name      string `json:"name"`
-				Namespace string `json:"namespace"`
-			} `json:"metadata"`
-			Containers []struct {
-				Usage struct {
-					CPU    string `json:"cpu"`
-					Memory string `json:"memory"`
-				} `json:"usage"`
-			} `json:"containers"`
-		} `json:"items"`
+			Metadata          struct{ UID, Name, Namespace string }
+			Timestamp, Window string
+			Containers        []struct {
+				Name  string
+				Usage struct{ CPU, Memory string }
+			}
+		}
 	}
-
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&list); err != nil {
+	if err := k.telemetryList(ctx, "/apis/metrics.k8s.io/v1beta1/pods", &list); err != nil {
 		return nil, err
 	}
-
-	var results []RawPodMetricItem
+	out := []RawPodMetricItem{}
 	for _, item := range list.Items {
-		metric := RawPodMetricItem{
-			Name:      item.Metadata.Name,
-			Namespace: item.Metadata.Namespace,
+		for _, c := range item.Containers {
+			out = append(out, RawPodMetricItem{UID: item.Metadata.UID, Name: item.Metadata.Name, Namespace: item.Metadata.Namespace,
+				Container: c.Name, Timestamp: item.Timestamp, Window: item.Window, CPUUsage: c.Usage.CPU, MemUsage: c.Usage.Memory})
 		}
-		if len(item.Containers) > 0 {
-			metric.CPUUsage = item.Containers[0].Usage.CPU
-			metric.MemUsage = item.Containers[0].Usage.Memory
-		}
-		results = append(results, metric)
 	}
-	return results, nil
+	return out, nil
 }
