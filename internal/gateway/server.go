@@ -28,7 +28,7 @@ import (
 	"github.com/verdantflarehub/verdantflare-station-core/migrations"
 )
 
-const Version = "0.3.19"
+const Version = "0.3.20"
 
 var requestIDPattern = regexp.MustCompile(`^[a-zA-Z0-9._:-]{1,128}$`)
 
@@ -412,7 +412,10 @@ func (s *Server) ServeHTTP(original http.ResponseWriter, r *http.Request) {
 				reply(w, 502, ErrorResponse{"BAD_GATEWAY", fmt.Sprintf("Failed to query workloads telemetry: %v", e), requestID})
 				return
 			}
-			reply(w, 200, map[string]any{"schema_version": workloads.SchemaVersion, "workloads": workloads.Workloads, "summary": workloads.Summary, "updated_at": workloads.UpdatedAt, "request_id": requestID})
+			reply(w, 200, struct {
+				*telemetry.WorkloadsResponse
+				RequestID string `json:"request_id"`
+			}{workloads, requestID})
 			return
 		}
 	}
