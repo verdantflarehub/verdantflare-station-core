@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/verdantflarehub/verdantflare-station-core/internal/catalog"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/config"
+	"github.com/verdantflarehub/verdantflare-station-core/internal/egress"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/gateway"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/identity"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/operations"
@@ -136,7 +138,21 @@ func run() int {
 		telemetryService.SetKubernetes(k8sReader)
 	}
 
-	server := &http.Server{Addr: c.Listen, Handler: &gateway.Server{Identity: service, BootstrapToken: c.BootstrapToken, Logger: logger, Catalog: appCatalog, Operations: ops, Telemetry: telemetryService}, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
+	var egressService *egress.Service
+	if encoded := os.Getenv("STATION_EGRESS_ENCRYPTION_KEY"); encoded != "" {
+		key, decodeErr := base64.StdEncoding.DecodeString(encoded)
+		prober, configErr := egress.NewProber(os.Getenv("STATION_EGRESS_ALLOWED_INTERNAL"))
+		if decodeErr != nil || configErr != nil {
+			logger.Error("egress_configuration_invalid")
+			return 1
+		}
+		egressService, err = egress.New(pool, c.StationID, key, prober)
+		if err != nil {
+			logger.Error("egress_configuration_invalid")
+			return 1
+		}
+	}
+	server := &http.Server{Addr: c.Listen, Handler: &gateway.Server{Identity: service, BootstrapToken: c.BootstrapToken, Logger: logger, Catalog: appCatalog, Operations: ops, Telemetry: telemetryService, Egress: egressService}, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 65 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	done := make(chan error, 1)
 	go func() { done <- server.ListenAndServe() }()
 	logger.Info("station_core_starting", "version", gateway.Version, "station_id", c.StationID, "listen", c.Listen, "contracts_major", migrations.ContractsMajor, "migration_version", migrations.Version, "session_ttl", c.SessionTTL.String(), "login_failure_limit", 5, "account_lock_duration", "15m", "log_level", c.LogLevel)

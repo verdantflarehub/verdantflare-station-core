@@ -21,13 +21,14 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/verdantflarehub/verdantflare-station-core/internal/catalog"
+	"github.com/verdantflarehub/verdantflare-station-core/internal/egress"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/identity"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/operations"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/telemetry"
 	"github.com/verdantflarehub/verdantflare-station-core/migrations"
 )
 
-const Version = "0.3.12"
+const Version = "0.3.13"
 
 var requestIDPattern = regexp.MustCompile(`^[a-zA-Z0-9._:-]{1,128}$`)
 
@@ -57,6 +58,7 @@ type Server struct {
 	Catalog        *catalog.Service
 	Operations     *operations.Service
 	Telemetry      *telemetry.Service
+	Egress         *egress.Service
 }
 type responseWriter struct {
 	http.ResponseWriter
@@ -206,6 +208,11 @@ func (s *Server) ServeHTTP(original http.ResponseWriter, r *http.Request) {
 	}()
 	if !valid {
 		failure(w, requestID, identity.Invalid)
+		return
+	}
+	if r.URL.Path == "/api/v1/proxies" || strings.HasPrefix(r.URL.Path, "/api/v1/proxies/") {
+		route = "/api/v1/proxies"
+		s.serveEgress(w, r, requestID)
 		return
 	}
 	routes := map[string]string{
