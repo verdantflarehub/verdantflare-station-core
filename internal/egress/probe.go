@@ -24,9 +24,9 @@ const ProbeTarget = "https://api.ipify.org?format=json"
 type Prober struct {
 	AllowedInternal map[string]bool
 	// Unexported overrides are only used by hermetic protocol tests.
-	target, queryURL, geoURL, ipinfoURL string
-	roots                               *x509.CertPool
-	timeout                             time.Duration
+	target, queryURL, geoURL, ipinfoURL, ipinfoTypeURL string
+	roots                                              *x509.CertPool
+	timeout                                            time.Duration
 }
 
 func NewProber(allowed string) (*Prober, error) {
@@ -359,10 +359,62 @@ func (p *Prober) Run(ctx context.Context, e Endpoint, c Credentials) Result {
 			}
 		}
 		result.Observations = append(result.Observations, i)
+		result.Observations = append(result.Observations, p.ipinfoType(ctx, client, target, &result))
 		result.LocationConflict = observationsConflict(result.Observations)
 	}
 	result.FinishedAt = time.Now().UTC()
 	return result
+}
+
+// The public website demo is a best-effort source, distinct from the geography API.
+// Keep unavailable/missing fields explicit; never infer type from the proxy's name.
+func (p *Prober) ipinfoType(ctx context.Context, client *http.Client, target string, result *Result) Observation {
+	u := "https://ipinfo.io/widget/demo/" + url.PathEscape(result.ExitIP)
+	if p.ipinfoTypeURL != "" {
+		u = p.ipinfoTypeURL
+	}
+	o := Observation{Source: "IPinfo (type)", URL: u, At: time.Now().UTC(), Status: "unavailable", IP: result.ExitIP}
+	var raw struct {
+		Input string `json:"input"`
+		Data  struct {
+			IP      string                                   `json:"ip"`
+			ASN     struct{ ASN, Name, Type string }         `json:"asn"`
+			Company struct{ Name, Type string }              `json:"company"`
+			Hosting *bool                                    `json:"is_hosting"`
+			Mobile  *bool                                    `json:"is_mobile"`
+			Privacy struct{ Hosting, Proxy, VPN, Tor *bool } `json:"privacy"`
+		} `json:"data"`
+	}
+	if err := fetch(ctx, client, u, &raw); err != nil {
+		o.Error = infoError(err)
+		return o
+	}
+	if raw.Input != result.ExitIP || raw.Data.IP != result.ExitIP {
+		o.Error = "ip_mismatch"
+		return o
+	}
+	var after struct {
+		IP string `json:"ip"`
+	}
+	if err := fetch(ctx, client, target, &after); err != nil {
+		o.Error = infoError(err)
+		return o
+	}
+	if after.IP != result.ExitIP || result.ExitChanged {
+		result.ExitChanged = true
+		o.Error = "exit_changed"
+		return o
+	}
+	o.Status = "available"
+	o.ASN, o.Organization = raw.Data.ASN.ASN, raw.Data.ASN.Name
+	o.ASNType = strings.ToLower(strings.TrimSpace(raw.Data.ASN.Type))
+	o.Company, o.CompanyType = raw.Data.Company.Name, strings.ToLower(strings.TrimSpace(raw.Data.Company.Type))
+	o.Datacenter = raw.Data.Hosting
+	if o.Datacenter == nil || (raw.Data.Privacy.Hosting != nil && *raw.Data.Privacy.Hosting) {
+		o.Datacenter = raw.Data.Privacy.Hosting
+	}
+	o.Mobile, o.Proxy, o.VPN, o.Tor = raw.Data.Mobile, raw.Data.Privacy.Proxy, raw.Data.Privacy.VPN, raw.Data.Privacy.Tor
+	return o
 }
 
 func observationsConflict(observations []Observation) bool {

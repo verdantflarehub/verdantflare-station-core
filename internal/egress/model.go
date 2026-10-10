@@ -84,6 +84,9 @@ type Observation struct {
 	ASN          string    `json:"asn,omitempty"`
 	ISP          string    `json:"isp,omitempty"`
 	Organization string    `json:"organization,omitempty"`
+	ASNType      string    `json:"asn_type,omitempty"`
+	Company      string    `json:"company,omitempty"`
+	CompanyType  string    `json:"company_type,omitempty"`
 	Datacenter   *bool     `json:"datacenter"`
 	Proxy        *bool     `json:"proxy"`
 	VPN          *bool     `json:"vpn"`

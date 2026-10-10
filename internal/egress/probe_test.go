@@ -179,6 +179,7 @@ func probeFixture(t *testing.T, protocol string, creds Credentials, handler http
 	p.queryURL = target.URL + "/quality"
 	p.geoURL = target.URL + "/geo"
 	p.ipinfoURL = target.URL + "/ipinfo"
+	p.ipinfoTypeURL = target.URL + "/ipinfo-type"
 	p.timeout = time.Second
 	return p, endpoint(t, addr, protocol), count
 }
@@ -193,6 +194,8 @@ func standardTarget(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, `{"ip":"8.8.8.8","country":"A","city":"City B","asn":"AS2"}`)
 	case "/ipinfo":
 		io.WriteString(w, `{"ip":"8.8.8.8","country":"US","region":"California","city":"City C","org":"AS3 Network C"}`)
+	case "/ipinfo-type":
+		io.WriteString(w, `{"input":"8.8.8.8","data":{"ip":"8.8.8.8","asn":{"asn":"AS3","name":"Network C","type":"isp"},"company":{"name":"Company C","type":"business"},"is_hosting":false,"privacy":{"hosting":false}}}`)
 	}
 }
 func TestProtocolsAndEvidence(t *testing.T) {
@@ -201,7 +204,7 @@ func TestProtocolsAndEvidence(t *testing.T) {
 			creds := Credentials{"test-user", "test-secret"}
 			p, e, count := probeFixture(t, protocol, creds, standardTarget)
 			r := p.Run(t.Context(), e, creds)
-			if r.Status != "passed" || r.Successes != 3 || len(r.Samples) != 3 || r.ExitIP != "8.8.8.8" || count.Load() != 6 || len(r.Observations) != 3 || !r.LocationConflict {
+			if r.Status != "passed" || r.Successes != 3 || len(r.Samples) != 3 || r.ExitIP != "8.8.8.8" || count.Load() != 8 || len(r.Observations) != 4 || !r.LocationConflict {
 				t.Fatalf("invalid evidence: %+v", r)
 			}
 			q := r.Observations[0]
@@ -310,7 +313,7 @@ func TestIPinfoFailuresDoNotInventEvidence(t *testing.T) {
 			})
 			r := p.Run(t.Context(), e, Credentials{})
 			i := r.Observations[2]
-			if r.Status != "passed" || count.Load() != 6 || i.Status != "unavailable" || i.Error != tc.errorCode || i.Region != "" || i.CountryCode != "" {
+			if r.Status != "passed" || count.Load() != 8 || i.Status != "unavailable" || i.Error != tc.errorCode || i.Region != "" || i.CountryCode != "" {
 				t.Fatal("source failure corrupted probe or leaked unvalidated geography", r)
 			}
 		})
