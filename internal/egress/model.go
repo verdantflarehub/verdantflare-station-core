@@ -78,6 +78,7 @@ type Observation struct {
 	Status       string    `json:"status"`
 	IP           string    `json:"ip"`
 	Country      string    `json:"country,omitempty"`
+	CountryCode  string    `json:"country_code,omitempty"`
 	Region       string    `json:"region,omitempty"`
 	City         string    `json:"city,omitempty"`
 	ASN          string    `json:"asn,omitempty"`

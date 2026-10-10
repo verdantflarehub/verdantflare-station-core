@@ -24,9 +24,9 @@ const ProbeTarget = "https://api.ipify.org?format=json"
 type Prober struct {
 	AllowedInternal map[string]bool
 	// Unexported overrides are only used by hermetic protocol tests.
-	target, queryURL, geoURL string
-	roots                    *x509.CertPool
-	timeout                  time.Duration
+	target, queryURL, geoURL, ipinfoURL string
+	roots                               *x509.CertPool
+	timeout                             time.Duration
 }
 
 func NewProber(allowed string) (*Prober, error) {
@@ -268,9 +268,10 @@ func (p *Prober) Run(ctx context.Context, e Endpoint, c Credentials) Result {
 				ISP string `json:"isp"`
 			} `json:"isp"`
 			Location struct {
-				Country string `json:"country"`
-				State   string `json:"state"`
-				City    string `json:"city"`
+				Country     string `json:"country"`
+				CountryCode string `json:"country_code"`
+				State       string `json:"state"`
+				City        string `json:"city"`
 			} `json:"location"`
 			Risk struct {
 				Mobile     *bool `json:"is_mobile"`
@@ -288,6 +289,7 @@ func (p *Prober) Run(ctx context.Context, e Endpoint, c Credentials) Result {
 		} else {
 			q.Status = "available"
 			q.Country = raw.Location.Country
+			q.CountryCode = raw.Location.CountryCode
 			q.Region = raw.Location.State
 			q.City = raw.Location.City
 			q.ASN = raw.ISP.ASN
@@ -319,14 +321,69 @@ func (p *Prober) Run(ctx context.Context, e Endpoint, c Credentials) Result {
 		} else {
 			g.Status = "available"
 			g.Country = geo.Country
+			if len(geo.Country) == 2 {
+				g.CountryCode = strings.ToUpper(geo.Country)
+			}
 			g.Region = geo.Region
 			g.City = geo.City
 			g.ASN = geo.ASN
 			g.Organization = geo.Company
 		}
 		result.Observations = append(result.Observations, g)
-		result.LocationConflict = q.Status == "available" && g.Status == "available" && ((q.Country != "" && g.Country != "" && q.Country != g.Country) || (q.City != "" && g.City != "" && q.City != g.City) || (q.ASN != "" && g.ASN != "" && q.ASN != g.ASN))
+		ipinfoURL := "https://ipinfo.io/" + url.PathEscape(result.ExitIP) + "/json"
+		if p.ipinfoURL != "" {
+			ipinfoURL = p.ipinfoURL
+		}
+		i := Observation{Source: "IPinfo", URL: ipinfoURL, At: time.Now().UTC(), Status: "unavailable", IP: result.ExitIP}
+		var info struct {
+			IP      string `json:"ip"`
+			Country string `json:"country"`
+			Region  string `json:"region"`
+			City    string `json:"city"`
+			Org     string `json:"org"`
+		}
+		if err := fetch(ctx, client, ipinfoURL, &info); err != nil {
+			i.Error = infoError(err)
+		} else if info.IP != result.ExitIP {
+			i.Error = "ip_mismatch"
+		} else {
+			i.Status = "available"
+			i.CountryCode = info.Country
+			i.Country = info.Country
+			i.Region = info.Region
+			i.City = info.City
+			i.Organization = info.Org
+			if asn, org, ok := strings.Cut(info.Org, " "); ok && strings.HasPrefix(asn, "AS") {
+				i.ASN = asn
+				i.Organization = org
+			}
+		}
+		result.Observations = append(result.Observations, i)
+		result.LocationConflict = observationsConflict(result.Observations)
 	}
 	result.FinishedAt = time.Now().UTC()
 	return result
+}
+
+func observationsConflict(observations []Observation) bool {
+	for i, a := range observations {
+		if a.Status != "available" {
+			continue
+		}
+		for _, b := range observations[i+1:] {
+			if b.Status != "available" {
+				continue
+			}
+			if len(a.Country) > 2 && len(b.Country) > 2 && !strings.EqualFold(strings.TrimSpace(a.Country), strings.TrimSpace(b.Country)) {
+				return true
+			}
+			// Compare country codes only: names and ISO codes are not interchangeable.
+			for _, pair := range [][2]string{{a.CountryCode, b.CountryCode}, {a.Region, b.Region}, {a.City, b.City}, {a.ASN, b.ASN}} {
+				if pair[0] != "" && pair[1] != "" && !strings.EqualFold(strings.TrimSpace(pair[0]), strings.TrimSpace(pair[1])) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
