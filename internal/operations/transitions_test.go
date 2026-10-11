@@ -12,7 +12,7 @@ import (
 )
 
 func transitionInputs() (TransitionCommand, Installation, TransitionSnapshot, TransitionSnapshot) {
-	source := TransitionSnapshot{AppID: "test-app", AppVersion: "1.9.0", ReleaseRef: "test-v1-9", ManifestDigest: "sha256:" + strings.Repeat("a", 64),
+	source := TransitionSnapshot{AppID: "test-app", AppVersion: "1.9.0", ReleaseRef: "test-v1-9", ReleaseDigest: "sha256:" + strings.Repeat("e", 64), ManifestDigest: "sha256:" + strings.Repeat("a", 64),
 		TemplateDigest: "sha256:" + strings.Repeat("b", 64), DashboardDigest: "sha256:" + strings.Repeat("c", 64), DataContract: "app-state-v1",
 		DefaultWorkerVersion: "1.0.0", CompatibleWorkerVersions: []string{"1.0.0"}}
 	target := source
@@ -37,12 +37,13 @@ func TestTransitionCompatibilityRetainsWorkerVersions(t *testing.T) {
 			v.DefaultWorkerVersion = "2.0.0"
 			v.CompatibleWorkerVersions = []string{"2.0.0"}
 		},
-		"unknown default":  func(v *TransitionSnapshot) { v.DefaultWorkerVersion = "2.0.0" },
-		"duplicate worker": func(v *TransitionSnapshot) { v.CompatibleWorkerVersions = []string{"1.0.0", "1.0.0"} },
-		"wrong direction":  func(v *TransitionSnapshot) { v.AppVersion = "1.8.0" },
-		"same version":     func(v *TransitionSnapshot) { v.AppVersion = source.AppVersion },
-		"mutable digest":   func(v *TransitionSnapshot) { v.ManifestDigest = "latest" },
-		"prerelease":       func(v *TransitionSnapshot) { v.AppVersion = "1.10.0-beta" },
+		"unknown default":         func(v *TransitionSnapshot) { v.DefaultWorkerVersion = "2.0.0" },
+		"duplicate worker":        func(v *TransitionSnapshot) { v.CompatibleWorkerVersions = []string{"1.0.0", "1.0.0"} },
+		"wrong direction":         func(v *TransitionSnapshot) { v.AppVersion = "1.8.0" },
+		"same version":            func(v *TransitionSnapshot) { v.AppVersion = source.AppVersion },
+		"mutable digest":          func(v *TransitionSnapshot) { v.ManifestDigest = "latest" },
+		"missing release binding": func(v *TransitionSnapshot) { v.ReleaseDigest = "" },
+		"prerelease":              func(v *TransitionSnapshot) { v.AppVersion = "1.10.0-beta" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			modified := target

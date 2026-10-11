@@ -44,10 +44,11 @@ type Operation struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 type Service struct {
-	Pool      *pgxpool.Pool
-	Catalog   *catalog.Service
-	StationID string
-	Releases  *releasebinding.Source
+	Pool               *pgxpool.Pool
+	Catalog            *catalog.Service
+	StationID          string
+	Releases           *releasebinding.Source
+	TransitionReleases *TransitionReleases
 }
 
 func (s *Service) Submit(ctx context.Context, u identity.IdentityContext, c Command) (Operation, error) {

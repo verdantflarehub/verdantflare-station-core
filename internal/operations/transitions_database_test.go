@@ -209,3 +209,41 @@ func TestTransitionDatabaseRejectedInputsAndAuditRollback(t *testing.T) {
 		t.Fatal("failed transaction left the installation locked", err)
 	}
 }
+
+func TestTransitionDatabaseReferencesRemainImmutableAfterFailure(t *testing.T) {
+	svc, user, command, reader := transitionDatabase(t)
+	ctx := context.Background()
+	first, err := svc.SubmitTransition(ctx, user, command, reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Fixture-only terminal result; no execution or installation version change.
+	if _, err := svc.Pool.Exec(ctx, `UPDATE station.app_installation_transitions SET status='failed',phase='completed' WHERE operation_id=$1`, first.OperationID); err != nil {
+		t.Fatal(err)
+	}
+	neverRead := func(context.Context, identity.IdentityContext, Installation, string) (TransitionSnapshot, TransitionSnapshot, error) {
+		t.Fatal("replay re-resolved release contents")
+		return TransitionSnapshot{}, TransitionSnapshot{}, nil
+	}
+	if replay, err := svc.SubmitTransition(ctx, user, command, neverRead); err != nil || replay.OperationID != first.OperationID || replay.Status != "failed" {
+		t.Fatal("original operation was not preserved", err)
+	}
+	command.IdempotencyKey = "next-transition-key"
+	for _, sourceChanged := range []bool{true, false} {
+		changed := func(ctx context.Context, actor identity.IdentityContext, installed Installation, ref string) (TransitionSnapshot, TransitionSnapshot, error) {
+			source, target, err := reader(ctx, actor, installed, ref)
+			if sourceChanged {
+				source.ManifestDigest = target.DashboardDigest
+			} else {
+				target.ManifestDigest = source.DashboardDigest
+			}
+			return source, target, err
+		}
+		if _, err := svc.SubmitTransition(ctx, user, command, changed); !errors.Is(err, identity.Conflict) {
+			t.Fatal("same release reference changed across durable operations", err)
+		}
+	}
+	if next, err := svc.SubmitTransition(ctx, user, command, reader); err != nil || next.OperationID == first.OperationID {
+		t.Fatal("original immutable release could not be reused", err)
+	}
+}

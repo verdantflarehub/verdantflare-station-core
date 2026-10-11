@@ -118,6 +118,9 @@ func run() int {
 	}
 	ops := &operations.Service{Pool: pool, Catalog: appCatalog, StationID: c.StationID}
 	ops.Releases = &releasebinding.Source{Path: os.Getenv("STATION_PREINSTALLED_RELEASE_REGISTRY")}
+	if path := os.Getenv("STATION_APP_TRANSITION_RELEASE_REGISTRY"); path != "" {
+		ops.TransitionReleases = &operations.TransitionReleases{Path: path}
+	}
 	if target := os.Getenv("STATION_RUNTIME_TARGET"); target != "" {
 		conn, e := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		if e != nil {

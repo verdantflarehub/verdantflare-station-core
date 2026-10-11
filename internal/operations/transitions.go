@@ -33,6 +33,7 @@ type TransitionSnapshot struct {
 	AppID                    string   `json:"app_id"`
 	AppVersion               string   `json:"app_version"`
 	ReleaseRef               string   `json:"release_ref"`
+	ReleaseDigest            string   `json:"release_digest"`
 	ManifestDigest           string   `json:"manifest_digest"`
 	TemplateDigest           string   `json:"template_digest"`
 	DashboardDigest          string   `json:"dashboard_digest"`
@@ -73,7 +74,7 @@ func (c TransitionCommand) valid() bool {
 }
 func (s TransitionSnapshot) valid() bool {
 	if !transitionName.MatchString(s.AppID) || !validTransitionVersion(s.AppVersion) || !transitionName.MatchString(s.ReleaseRef) ||
-		!transitionDigest.MatchString(s.ManifestDigest) || !transitionDigest.MatchString(s.TemplateDigest) || !transitionDigest.MatchString(s.DashboardDigest) ||
+		!transitionDigest.MatchString(s.ReleaseDigest) || !transitionDigest.MatchString(s.ManifestDigest) || !transitionDigest.MatchString(s.TemplateDigest) || !transitionDigest.MatchString(s.DashboardDigest) ||
 		!transitionName.MatchString(s.DataContract) || len(s.CompatibleWorkerVersions) == 0 || len(s.CompatibleWorkerVersions) > 128 ||
 		!slices.Contains(s.CompatibleWorkerVersions, s.DefaultWorkerVersion) {
 		return false
@@ -210,6 +211,9 @@ func (s *Service) SubmitTransition(ctx context.Context, actor identity.IdentityC
 	if busy {
 		return Transition{}, identity.Conflict
 	}
+	if reader == nil && s.TransitionReleases != nil {
+		reader = s.TransitionReleases.Read
+	}
 	if reader == nil {
 		return Transition{}, errors.New("verified transition release reader unavailable")
 	}
@@ -219,6 +223,9 @@ func (s *Service) SubmitTransition(ctx context.Context, actor identity.IdentityC
 	}
 	if !compatibleTransition(c, installed, source, target) {
 		return Transition{}, identity.Invalid
+	}
+	if err := retainTransitionReferences(ctx, tx, source, target); err != nil {
+		return Transition{}, err
 	}
 	sourceRaw, _ := json.Marshal(source)
 	targetRaw, _ := json.Marshal(target)
@@ -235,4 +242,31 @@ func (s *Service) SubmitTransition(ctx context.Context, actor identity.IdentityC
 		return Transition{}, err
 	}
 	return out, tx.Commit(ctx)
+}
+
+// Reuse the durable accepted snapshots as the immutable reference ledger.
+// Failed and recovered operations still pin their release content. Locks are
+// global to a release reference and acquired in order across installations.
+func retainTransitionReferences(ctx context.Context, tx pgx.Tx, source, target TransitionSnapshot) error {
+	snapshots := []TransitionSnapshot{source, target}
+	slices.SortFunc(snapshots, func(a, b TransitionSnapshot) int { return strings.Compare(a.ReleaseRef, b.ReleaseRef) })
+	for _, snapshot := range snapshots {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, "transition-release:"+snapshot.ReleaseRef); err != nil {
+			return err
+		}
+		raw, err := json.Marshal(snapshot)
+		if err != nil {
+			return err
+		}
+		var changed bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM station.app_installation_transitions
+			WHERE (source_snapshot->>'release_ref'=$1 AND source_snapshot<>$2::jsonb)
+			OR (target_snapshot->>'release_ref'=$1 AND target_snapshot<>$2::jsonb))`, snapshot.ReleaseRef, raw).Scan(&changed); err != nil {
+			return err
+		}
+		if changed {
+			return identity.Conflict
+		}
+	}
+	return nil
 }
