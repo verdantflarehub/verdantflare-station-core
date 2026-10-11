@@ -65,7 +65,8 @@ type Server struct {
 }
 type responseWriter struct {
 	http.ResponseWriter
-	status int
+	status    int
+	appCenter bool
 }
 
 func (w *responseWriter) WriteHeader(status int) {
@@ -81,6 +82,14 @@ func (w *responseWriter) Write(p []byte) (int, error) {
 	return w.ResponseWriter.Write(p)
 }
 func reply(w http.ResponseWriter, status int, value any) {
+	if routeWriter, ok := w.(*responseWriter); ok && routeWriter.appCenter {
+		if failure, ok := value.(ErrorResponse); ok {
+			value = struct {
+				Code      string `json:"code"`
+				RequestID string `json:"requestId"`
+			}{failure.Code, failure.RequestID}
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if value != nil {
@@ -186,7 +195,7 @@ func bearer(r *http.Request) string {
 	return parts[1]
 }
 func (s *Server) ServeHTTP(original http.ResponseWriter, r *http.Request) {
-	w := &responseWriter{ResponseWriter: original}
+	w := &responseWriter{ResponseWriter: original, appCenter: strings.HasPrefix(r.URL.Path, "/appcenter/v1/")}
 	started := time.Now()
 	requestID := r.Header.Get("X-Request-ID")
 	valid := requestID == "" || requestIDPattern.MatchString(requestID)
@@ -219,6 +228,7 @@ func (s *Server) ServeHTTP(original http.ResponseWriter, r *http.Request) {
 		return
 	}
 	routes := map[string]string{
+		"/appcenter/v1/facts":                      "GET",
 		"/internal/v1/app-installations/authorize": "POST",
 		"/preinstalled/commands":                   "POST",
 		"/internal/v1/app-access":                  "POST",
@@ -380,6 +390,10 @@ func (s *Server) ServeHTTP(original http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sessionID = user.SessionID
+	if route == "/appcenter/v1/facts" {
+		s.serveAppCenter(w, r, ctx, requestID, user)
+		return
+	}
 	if strings.HasPrefix(route, "/preinstalled/") {
 		s.servePreinstalled(w, r, ctx, requestID, user)
 		return
