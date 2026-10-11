@@ -2,11 +2,13 @@ package operations
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/verdantflarehub/verdantflare-station-core/internal/releasebinding"
 	pb "github.com/verdantflarehub/verdantflare-station-core/internal/runtimev1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -21,12 +23,20 @@ func (s *Service) DispatchOne(ctx context.Context, client pb.AppRuntimeClient) (
 	}
 	defer tx.Rollback(context.Background())
 	in := &pb.AppRequest{}
-	err = tx.QueryRow(ctx, `SELECT operation_id::text,request_id,user_id::text,organization_id::text,station_id::text,app_id,app_version,action,expected_workload_uid FROM station.app_operations WHERE station_id=$1 AND status IN ('accepted','running') ORDER BY updated_at,operation_id LIMIT 1 FOR UPDATE SKIP LOCKED`, s.StationID).Scan(&in.OperationId, &in.RequestId, &in.UserId, &in.OrganizationId, &in.StationId, &in.AppId, &in.AppVersion, &in.Action, &in.ExpectedWorkloadUid)
+	var bindingRaw []byte
+	err = tx.QueryRow(ctx, `SELECT operation_id::text,request_id,user_id::text,organization_id::text,station_id::text,app_id,app_version,action,expected_workload_uid,(SELECT binding FROM station.preinstalled_operation_bindings b WHERE b.operation_id=station.app_operations.operation_id),COALESCE(installation_id::text,'') FROM station.app_operations WHERE station_id=$1 AND status IN ('accepted','running') ORDER BY updated_at,operation_id LIMIT 1 FOR UPDATE SKIP LOCKED`, s.StationID).Scan(&in.OperationId, &in.RequestId, &in.UserId, &in.OrganizationId, &in.StationId, &in.AppId, &in.AppVersion, &in.Action, &in.ExpectedWorkloadUid, &bindingRaw, &in.InstallationId)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
 		return false, err
+	}
+	if len(bindingRaw) > 0 {
+		var binding releasebinding.Binding
+		if json.Unmarshal(bindingRaw, &binding) != nil || !binding.Valid() || binding.AppID != in.AppId || binding.AppVersion != in.AppVersion {
+			return true, errors.New("invalid preinstalled operation binding")
+		}
+		in.PreinstalledRelease = &pb.PreinstalledRelease{ReleaseRef: binding.ReleaseRef, PackageDigest: binding.PackageDigest, ChartDigest: binding.ChartDigest, TemplateDigest: binding.TemplateDigest}
 	}
 	callCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
@@ -60,6 +70,9 @@ func (s *Service) DispatchOne(ctx context.Context, client pb.AppRuntimeClient) (
 	}
 	_, err = tx.Exec(ctx, `UPDATE station.app_operations SET status=$2,phase=$3,downloaded_bytes=$4,total_bytes=$5,error_code=NULLIF($6,''),error_message=NULLIF($7,''),updated_at=now() WHERE operation_id=$1`, in.OperationId, progress.Status, progress.Phase, progress.DownloadedBytes, progress.TotalBytes, progress.ErrorCode, progress.ErrorMessage)
 	if err != nil {
+		return true, err
+	}
+	if err = recordInstallationProgress(ctx, tx, in.OperationId, in.Action, progress.Status); err != nil {
 		return true, err
 	}
 	return true, tx.Commit(ctx)

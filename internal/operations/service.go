@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/catalog"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/identity"
+	"github.com/verdantflarehub/verdantflare-station-core/internal/releasebinding"
 	"slices"
 	"time"
 )
@@ -46,9 +47,13 @@ type Service struct {
 	Pool      *pgxpool.Pool
 	Catalog   *catalog.Service
 	StationID string
+	Releases  *releasebinding.Source
 }
 
 func (s *Service) Submit(ctx context.Context, u identity.IdentityContext, c Command) (Operation, error) {
+	return s.submit(ctx, u, c, nil)
+}
+func (s *Service) submit(ctx context.Context, u identity.IdentityContext, c Command, preinstalled *PreinstalledCommand) (Operation, error) {
 	var o Operation
 	if !slices.Contains(u.Roles, "admin") || !slices.Contains(u.Scopes, "app:manage") {
 		return o, identity.Denied
@@ -69,10 +74,7 @@ func (s *Service) Submit(ctx context.Context, u identity.IdentityContext, c Comm
 	} else if c.ExpectedWorkloadUID != "" {
 		return o, identity.Invalid
 	}
-	normalized := c
-	normalized.RequestID = ""
-	raw, _ := json.Marshal(normalized)
-	sum := sha256.Sum256(raw)
+	sum := commandHash(c, preinstalled)
 	tx, e := s.Pool.Begin(ctx)
 	if e != nil {
 		return o, e
@@ -97,7 +99,7 @@ func (s *Service) Submit(ctx context.Context, u identity.IdentityContext, c Comm
 		legacyCommand.RequestID = originalRequestID
 		legacyRaw, _ := json.Marshal(legacyCommand)
 		legacy := sha256.Sum256(legacyRaw)
-		if string(old) != string(sum[:]) && string(old) != string(legacy[:]) {
+		if string(old) != string(sum[:]) && (preinstalled != nil || string(old) != string(legacy[:])) {
 			return o, identity.Conflict
 		}
 		o, e = read(ctx, tx, u, s.StationID, id)
@@ -116,13 +118,22 @@ func (s *Service) Submit(ctx context.Context, u identity.IdentityContext, c Comm
 	if !ok || a.Version != c.AppVersion {
 		return o, identity.Invalid
 	}
+	if preinstalled != nil {
+		if e = s.validatePreinstalled(ctx, tx, u, preinstalled); e != nil {
+			return o, e
+		}
+	}
 	var busy bool
-	e = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM station.app_operations WHERE station_id=$1 AND app_id=$2 AND status IN ('accepted','running'))`, s.StationID, c.AppID).Scan(&busy)
+	e = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM station.app_operations WHERE station_id=$1 AND app_id=$2 AND status IN ('accepted','running')) OR EXISTS(SELECT 1 FROM station.app_installation_transitions WHERE station_id=$1 AND app_id=$2 AND status NOT IN ('succeeded','failed'))`, s.StationID, c.AppID).Scan(&busy)
 	if e != nil {
 		return o, e
 	}
 	if busy {
 		return o, identity.Conflict
+	}
+	installationID, e := reserveInstallation(ctx, tx, u, c)
+	if e != nil {
+		return o, e
 	}
 	oid := uuid.Must(uuid.NewV7())
 	now := time.Now().UTC()
@@ -136,6 +147,14 @@ func (s *Service) Submit(ctx context.Context, u identity.IdentityContext, c Comm
 	_, e = tx.Exec(ctx, `INSERT INTO station.app_operations(operation_id,request_id,user_id,organization_id,station_id,app_id,app_version,action,status,phase,idempotency_key,request_hash,expected_workload_uid) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'accepted',$9,$10,$11,$12)`, oid, c.RequestID, u.UserID, u.OrganizationID, s.StationID, c.AppID, c.AppVersion, c.Action, phase, c.IdempotencyKey, sum[:], c.ExpectedWorkloadUID)
 	if e != nil {
 		return o, e
+	}
+	if e = bindInstallationOperation(ctx, tx, installationID, oid.String()); e != nil {
+		return o, e
+	}
+	if preinstalled != nil {
+		if e = bindPreinstalled(ctx, tx, oid.String(), installationID, preinstalled.Release); e != nil {
+			return o, e
+		}
 	}
 	_, e = tx.Exec(ctx, `INSERT INTO station.audit_events(event_id,request_id,user_id,organization_id,session_id,action,outcome) VALUES($1,$2,$3,$4,$5,$6,'succeeded')`, uuid.Must(uuid.NewV7()), c.RequestID, u.UserID, u.OrganizationID, u.SessionID, "app."+c.Action+".accepted")
 	if e != nil {

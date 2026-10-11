@@ -28,7 +28,7 @@ import (
 	"github.com/verdantflarehub/verdantflare-station-core/migrations"
 )
 
-const Version = "0.3.20"
+const Version = "0.3.21"
 
 var requestIDPattern = regexp.MustCompile(`^[a-zA-Z0-9._:-]{1,128}$`)
 
@@ -52,14 +52,16 @@ type StationHealth struct {
 	RequestID  string            `json:"request_id"`
 }
 type Server struct {
-	Identity       *identity.Service
-	BootstrapToken string
-	Logger         *slog.Logger
-	Catalog        *catalog.Service
-	Operations     *operations.Service
-	Telemetry      *telemetry.Service
-	BlenderControl *BlenderControl
-	Egress         *egress.Service
+	Identity           *identity.Service
+	BootstrapToken     string
+	Logger             *slog.Logger
+	Catalog            *catalog.Service
+	Operations         *operations.Service
+	Telemetry          *telemetry.Service
+	BlenderControl     *BlenderControl
+	Egress             *egress.Service
+	AppAccess          *AppAccess
+	InstallationAccess *InstallationAccess
 }
 type responseWriter struct {
 	http.ResponseWriter
@@ -217,15 +219,25 @@ func (s *Server) ServeHTTP(original http.ResponseWriter, r *http.Request) {
 		return
 	}
 	routes := map[string]string{
-		"/internal/v1/blender/create":  "POST",
-		"/internal/v1/blender/start":   "POST",
-		"/internal/v1/blender/stop":    "POST",
-		"/internal/v1/blender/destroy": "POST",
-		"/internal/v1/blender/access":  "POST",
-		"/internal/v1/blender/options": "POST",
-		"/app-commands":                "POST", "/healthz": "GET", "/readyz": "GET", "/identity/bootstrap": "POST", "/identity/login": "POST", "/identity/refresh": "POST", "/identity/logout": "POST", "/identity/me": "GET", "/identity/scopes": "GET", "/station/health": "GET",
+		"/internal/v1/app-installations/authorize": "POST",
+		"/preinstalled/commands":                   "POST",
+		"/internal/v1/app-access":                  "POST",
+		"/internal/v1/resources/snapshot":          "GET",
+		"/internal/v1/blender/create":              "POST",
+		"/internal/v1/blender/start":               "POST",
+		"/internal/v1/blender/stop":                "POST",
+		"/internal/v1/blender/destroy":             "POST",
+		"/internal/v1/blender/access":              "POST",
+		"/internal/v1/blender/options":             "POST",
+		"/app-commands":                            "POST", "/healthz": "GET", "/readyz": "GET", "/identity/bootstrap": "POST", "/identity/login": "POST", "/identity/refresh": "POST", "/identity/logout": "POST", "/identity/me": "GET", "/identity/scopes": "GET", "/station/health": "GET",
 		"/api/v1/resources/gpu": "GET", "/api/v1/resources/node": "GET", "/api/v1/resources/summary": "GET", "/api/v1/resources/workloads": "GET"}
 	if strings.HasPrefix(r.URL.Path, "/app-operations/") || r.URL.Path == "/catalog/apps" || strings.HasPrefix(r.URL.Path, "/catalog/apps/") {
+		routes[r.URL.Path] = "GET"
+	}
+	if r.URL.Path == "/app-installations" || strings.HasPrefix(r.URL.Path, "/app-installations/") {
+		routes[r.URL.Path] = "GET"
+	}
+	if strings.HasPrefix(r.URL.Path, "/preinstalled/apps/") || strings.HasPrefix(r.URL.Path, "/preinstalled/releases/") {
 		routes[r.URL.Path] = "GET"
 	}
 	method, ok := routes[r.URL.Path]
@@ -242,6 +254,15 @@ func (s *Server) ServeHTTP(original http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	switch route {
+	case "/internal/v1/app-installations/authorize":
+		s.installationAccess(w, r.WithContext(ctx), requestID)
+		return
+	case "/internal/v1/app-access":
+		s.appAccess(w, r, requestID)
+		return
+	case "/internal/v1/resources/snapshot":
+		s.resourcesSnapshot(w, r, requestID)
+		return
 	case "/internal/v1/blender/options":
 		s.blenderOptions(w, r, requestID)
 		return
@@ -359,6 +380,14 @@ func (s *Server) ServeHTTP(original http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sessionID = user.SessionID
+	if strings.HasPrefix(route, "/preinstalled/") {
+		s.servePreinstalled(w, r, ctx, requestID, user)
+		return
+	}
+	if route == "/app-installations" || strings.HasPrefix(route, "/app-installations/") {
+		s.serveInstallations(w, r, ctx, requestID, user)
+		return
+	}
 	if strings.HasPrefix(route, "/app-operations/") {
 		if s.Operations == nil {
 			reply(w, 503, ErrorResponse{"SERVICE_UNAVAILABLE", "Application operations are not configured", requestID})

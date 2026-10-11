@@ -26,12 +26,16 @@ import (
 
 type runtimeTestServer struct {
 	pb.UnimplementedAppRuntimeServer
-	calls int
-	id    string
+	calls        int
+	id           string
+	installation string
 }
 
 func (s *runtimeTestServer) Reconcile(ctx context.Context, r *pb.AppRequest) (*pb.AppProgress, error) {
 	s.calls++
+	if r.InstallationId != s.installation {
+		return nil, status.Error(codes.InvalidArgument, "installation identity changed")
+	}
 	if s.id == "" {
 		s.id = r.OperationId
 	}
@@ -73,7 +77,11 @@ func TestDispatchGRPCRecovery(t *testing.T) {
 	}
 	lis := bufconn.Listen(1 << 20)
 	server := grpc.NewServer()
-	backend := &runtimeTestServer{}
+	installed, e := s.ListInstallations(ctx, session.IdentityContext)
+	if e != nil || len(installed) != 1 || installed[0].State != "pending" {
+		t.Fatal("pending installation missing", e)
+	}
+	backend := &runtimeTestServer{installation: installed[0].InstallationID}
 	pb.RegisterAppRuntimeServer(server, backend)
 	go server.Serve(lis)
 	defer server.Stop()

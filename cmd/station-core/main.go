@@ -22,6 +22,7 @@ import (
 	"github.com/verdantflarehub/verdantflare-station-core/internal/gateway"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/identity"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/operations"
+	"github.com/verdantflarehub/verdantflare-station-core/internal/releasebinding"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/telemetry"
 	"github.com/verdantflarehub/verdantflare-station-core/migrations"
 )
@@ -116,6 +117,7 @@ func run() int {
 		k8sReader, _ = catalog.NewKubernetes(os.Getenv("STATION_KUBECONFIG"))
 	}
 	ops := &operations.Service{Pool: pool, Catalog: appCatalog, StationID: c.StationID}
+	ops.Releases = &releasebinding.Source{Path: os.Getenv("STATION_PREINSTALLED_RELEASE_REGISTRY")}
 	if target := os.Getenv("STATION_RUNTIME_TARGET"); target != "" {
 		conn, e := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		if e != nil {
@@ -157,7 +159,17 @@ func run() int {
 			return 1
 		}
 	}
-	server := &http.Server{Addr: c.Listen, Handler: &gateway.Server{Identity: service, BootstrapToken: c.BootstrapToken, Logger: logger, Catalog: appCatalog, Operations: ops, Telemetry: telemetryService, BlenderControl: blenderControl, Egress: egressService}, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 65 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
+	appAccess, err := gateway.NewAppAccess(os.Getenv("STATION_NETWORK_TOKEN"), os.Getenv("STATION_RESOURCES_TOKEN"), service)
+	if err != nil {
+		logger.Error("invalid_app_delegation_configuration")
+		return 1
+	}
+	installationAccess, err := gateway.LoadInstallationAccess(os.Getenv("STATION_APP_INSTALLATION_ACCESS_REGISTRY"), os.Getenv, service, ops)
+	if err != nil {
+		logger.Error("invalid_installation_access_configuration")
+		return 1
+	}
+	server := &http.Server{Addr: c.Listen, Handler: &gateway.Server{Identity: service, BootstrapToken: c.BootstrapToken, Logger: logger, Catalog: appCatalog, Operations: ops, Telemetry: telemetryService, BlenderControl: blenderControl, Egress: egressService, AppAccess: appAccess, InstallationAccess: installationAccess}, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 65 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	done := make(chan error, 1)
 	go func() { done <- server.ListenAndServe() }()
 	logger.Info("station_core_starting", "version", gateway.Version, "station_id", c.StationID, "listen", c.Listen, "contracts_major", migrations.ContractsMajor, "migration_version", migrations.Version, "session_ttl", c.SessionTTL.String(), "login_failure_limit", 5, "account_lock_duration", "15m", "log_level", c.LogLevel)
