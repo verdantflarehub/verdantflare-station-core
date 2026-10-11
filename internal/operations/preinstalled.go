@@ -46,7 +46,7 @@ func (s *Service) SubmitPreinstalled(ctx context.Context, u identity.IdentityCon
 	if !in.Release.Valid() || in.Release.AppID != in.Command.AppID || in.Release.AppVersion != in.Command.AppVersion || !preinstalledDigest.MatchString(in.InventoryRevision) || !slices.Contains([]string{"install", "adopt"}, in.Command.Action) {
 		return Operation{}, identity.Invalid
 	}
-	return s.submit(ctx, u, in.Command, &in)
+	return s.submit(ctx, u, in.Command, &in, nil, nil)
 }
 func commandHash(c Command, preinstalled *PreinstalledCommand) [32]byte {
 	c.RequestID = ""

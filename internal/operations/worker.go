@@ -31,6 +31,22 @@ func (s *Service) DispatchOne(ctx context.Context, client pb.AppRuntimeClient) (
 	if err != nil {
 		return false, err
 	}
+	// Never silently strip a constrained operation's durable binding into the
+	// legacy Runtime protocol. This guard is replaced only by a verified bound
+	// dispatch path, before the new submitter can be exposed publicly.
+	var constrained bool
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM station.appcenter_operation_inputs WHERE operation_id=$1)`, in.OperationId).Scan(&constrained); err != nil {
+		return true, err
+	}
+	if constrained {
+		if _, err = tx.Exec(ctx, `UPDATE station.app_operations SET updated_at=now() WHERE operation_id=$1`, in.OperationId); err != nil {
+			return true, err
+		}
+		if err = tx.Commit(ctx); err != nil {
+			return true, err
+		}
+		return true, ErrAppCenterDispatch
+	}
 	if len(bindingRaw) > 0 {
 		var binding releasebinding.Binding
 		if json.Unmarshal(bindingRaw, &binding) != nil || !binding.Valid() || binding.AppID != in.AppId || binding.AppVersion != in.AppVersion {

@@ -20,7 +20,7 @@ import (
 var files embed.FS
 
 const ContractsMajor = 1
-const Version = 15
+const Version = 16
 
 type migration struct {
 	version             int

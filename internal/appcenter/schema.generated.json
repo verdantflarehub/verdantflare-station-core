@@ -1,0 +1,210 @@
+{
+  "station://contracts/appcenter-v1/command-core": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "station://contracts/appcenter-v1/command-core",
+    "title": "command-core",
+    "type": "object",
+    "properties": {
+      "schemaVersion": {
+        "const": 1
+      },
+      "command": {
+        "$ref": "station://contracts/v1/app-command",
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[^\u0000- ]+$"
+          },
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 128,
+            "pattern": "^[^\u0000- ]+$"
+          },
+          "organization_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          },
+          "station_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          },
+          "app_id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"
+          },
+          "app_version": {
+            "type": "string",
+            "maxLength": 64,
+            "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+          },
+          "action": {
+            "enum": [
+              "install",
+              "start",
+              "stop",
+              "restart",
+              "delete"
+            ]
+          }
+        }
+      },
+      "expected": {
+        "type": "object",
+        "properties": {
+          "installationId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "installationRevision": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "appVersion": {
+            "type": "string",
+            "maxLength": 64,
+            "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+          },
+          "releaseDigest": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^sha256:[a-f0-9]{64}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "workloadUID": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "policyRevision": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          }
+        },
+        "required": [
+          "installationId",
+          "installationRevision",
+          "appVersion",
+          "releaseDigest",
+          "workloadUID",
+          "policyRevision"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "required": [
+      "schemaVersion",
+      "command",
+      "expected"
+    ],
+    "additionalProperties": false
+  },
+  "station://contracts/v1/app-command": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "station://contracts/v1/app-command",
+    "title": "AppCommand",
+    "type": "object",
+    "required": [
+      "request_id",
+      "idempotency_key",
+      "organization_id",
+      "station_id",
+      "app_id",
+      "app_version",
+      "action"
+    ],
+    "properties": {
+      "request_id": {
+        "type": "string",
+        "minLength": 1
+      },
+      "idempotency_key": {
+        "type": "string",
+        "minLength": 8,
+        "maxLength": 128
+      },
+      "organization_id": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "station_id": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "app_id": {
+        "type": "string",
+        "minLength": 1
+      },
+      "app_version": {
+        "type": "string",
+        "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+      },
+      "action": {
+        "enum": [
+          "install",
+          "start",
+          "stop",
+          "restart",
+          "delete",
+          "adopt"
+        ]
+      },
+      "expected_workload_uid": {
+        "type": "string",
+        "format": "uuid"
+      }
+    },
+    "additionalProperties": false,
+    "allOf": [
+      {
+        "if": {
+          "properties": {
+            "action": {
+              "const": "adopt"
+            }
+          }
+        },
+        "then": {
+          "required": [
+            "expected_workload_uid"
+          ]
+        },
+        "else": {
+          "not": {
+            "required": [
+              "expected_workload_uid"
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

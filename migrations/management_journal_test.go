@@ -7,7 +7,7 @@ func TestManagementJournalMigrationSequence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(all) != 15 || all[14].name != "0015_runtime_management_transitions.sql" {
+	if len(all) < 15 || all[14].name != "0015_runtime_management_transitions.sql" {
 		t.Fatal("management journal migration is not in the executable sequence")
 	}
 }

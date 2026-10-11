@@ -52,9 +52,9 @@ type Service struct {
 }
 
 func (s *Service) Submit(ctx context.Context, u identity.IdentityContext, c Command) (Operation, error) {
-	return s.submit(ctx, u, c, nil)
+	return s.submit(ctx, u, c, nil, nil, nil)
 }
-func (s *Service) submit(ctx context.Context, u identity.IdentityContext, c Command, preinstalled *PreinstalledCommand) (Operation, error) {
+func (s *Service) submit(ctx context.Context, u identity.IdentityContext, c Command, preinstalled *PreinstalledCommand, constrained *AppCenterCommand, admission AppCenterAdmission) (Operation, error) {
 	var o Operation
 	if !slices.Contains(u.Roles, "admin") || !slices.Contains(u.Scopes, "app:manage") {
 		return o, identity.Denied
@@ -76,6 +76,9 @@ func (s *Service) submit(ctx context.Context, u identity.IdentityContext, c Comm
 		return o, identity.Invalid
 	}
 	sum := commandHash(c, preinstalled)
+	if constrained != nil {
+		sum = appCenterHash(*constrained)
+	}
 	tx, e := s.Pool.Begin(ctx)
 	if e != nil {
 		return o, e
@@ -100,7 +103,7 @@ func (s *Service) submit(ctx context.Context, u identity.IdentityContext, c Comm
 		legacyCommand.RequestID = originalRequestID
 		legacyRaw, _ := json.Marshal(legacyCommand)
 		legacy := sha256.Sum256(legacyRaw)
-		if string(old) != string(sum[:]) && (preinstalled != nil || string(old) != string(legacy[:])) {
+		if string(old) != string(sum[:]) && (preinstalled != nil || constrained != nil || string(old) != string(legacy[:])) {
 			return o, identity.Conflict
 		}
 		o, e = read(ctx, tx, u, s.StationID, id)
@@ -112,12 +115,30 @@ func (s *Service) submit(ctx context.Context, u identity.IdentityContext, c Comm
 	if !errors.Is(e, pgx.ErrNoRows) {
 		return o, e
 	}
-	if s.Catalog == nil {
-		return o, identity.Invalid
-	}
-	a, ok := s.Catalog.Get(ctx, c.AppID)
-	if !ok || a.Version != c.AppVersion {
-		return o, identity.Invalid
+	var execution AppCenterExecution
+	if constrained != nil {
+		installed, err := validateAppCenterInstallation(ctx, tx, u, *constrained)
+		if err != nil {
+			return o, err
+		}
+		if admission == nil {
+			return o, ErrAppCenterRelease
+		}
+		execution, err = admission(ctx, u, c, installed)
+		if err != nil {
+			return o, err
+		}
+		if err = validateAppCenterExecution(*constrained, execution); err != nil {
+			return o, err
+		}
+	} else {
+		if s.Catalog == nil {
+			return o, identity.Invalid
+		}
+		a, ok := s.Catalog.Get(ctx, c.AppID)
+		if !ok || a.Version != c.AppVersion {
+			return o, identity.Invalid
+		}
 	}
 	if preinstalled != nil {
 		if e = s.validatePreinstalled(ctx, tx, u, preinstalled); e != nil {
@@ -151,6 +172,11 @@ func (s *Service) submit(ctx context.Context, u identity.IdentityContext, c Comm
 	}
 	if e = bindInstallationOperation(ctx, tx, installationID, oid.String()); e != nil {
 		return o, e
+	}
+	if constrained != nil {
+		if e = bindAppCenterInput(ctx, tx, oid.String(), *constrained, execution); e != nil {
+			return o, e
+		}
 	}
 	if preinstalled != nil {
 		if e = bindPreinstalled(ctx, tx, oid.String(), installationID, preinstalled.Release); e != nil {

@@ -1,0 +1,244 @@
+[
+  {
+    "name": "installed-start",
+    "valid": true,
+    "input": {
+      "schemaVersion": 1,
+      "command": {
+        "request_id": "trace-one",
+        "idempotency_key": "command-key-one",
+        "organization_id": "00000000-0000-7000-8000-000000000002",
+        "station_id": "00000000-0000-7000-8000-000000000003",
+        "app_id": "test-app",
+        "app_version": "1.9.0",
+        "action": "start"
+      },
+      "expected": {
+        "installationId": "00000000-0000-7000-8000-000000000004",
+        "installationRevision": 3,
+        "appVersion": "1.9.0",
+        "releaseDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "workloadUID": "00000000-0000-4000-8000-000000000005",
+        "policyRevision": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    }
+  },
+  {
+    "name": "absent-install",
+    "valid": true,
+    "input": {
+      "schemaVersion": 1,
+      "command": {
+        "request_id": "trace-one",
+        "idempotency_key": "command-key-one",
+        "organization_id": "00000000-0000-7000-8000-000000000002",
+        "station_id": "00000000-0000-7000-8000-000000000003",
+        "app_id": "test-app",
+        "app_version": "1.9.0",
+        "action": "install"
+      },
+      "expected": {
+        "installationId": null,
+        "installationRevision": null,
+        "appVersion": "1.9.0",
+        "releaseDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "workloadUID": null,
+        "policyRevision": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    }
+  },
+  {
+    "name": "unknown-execution-address",
+    "valid": false,
+    "input": {
+      "schemaVersion": 1,
+      "command": {
+        "request_id": "trace-one",
+        "idempotency_key": "command-key-one",
+        "organization_id": "00000000-0000-7000-8000-000000000002",
+        "station_id": "00000000-0000-7000-8000-000000000003",
+        "app_id": "test-app",
+        "app_version": "1.9.0",
+        "action": "start",
+        "endpoint": "https://other.invalid"
+      },
+      "expected": {
+        "installationId": "00000000-0000-7000-8000-000000000004",
+        "installationRevision": 3,
+        "appVersion": "1.9.0",
+        "releaseDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "workloadUID": "00000000-0000-4000-8000-000000000005",
+        "policyRevision": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    }
+  },
+  {
+    "name": "adopt-outside-wrapper",
+    "valid": false,
+    "input": {
+      "schemaVersion": 1,
+      "command": {
+        "request_id": "trace-one",
+        "idempotency_key": "command-key-one",
+        "organization_id": "00000000-0000-7000-8000-000000000002",
+        "station_id": "00000000-0000-7000-8000-000000000003",
+        "app_id": "test-app",
+        "app_version": "1.9.0",
+        "action": "adopt"
+      },
+      "expected": {
+        "installationId": "00000000-0000-7000-8000-000000000004",
+        "installationRevision": 3,
+        "appVersion": "1.9.0",
+        "releaseDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "workloadUID": "00000000-0000-4000-8000-000000000005",
+        "policyRevision": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    }
+  },
+  {
+    "name": "upgrade-outside-wrapper",
+    "valid": false,
+    "input": {
+      "schemaVersion": 1,
+      "command": {
+        "request_id": "trace-one",
+        "idempotency_key": "command-key-one",
+        "organization_id": "00000000-0000-7000-8000-000000000002",
+        "station_id": "00000000-0000-7000-8000-000000000003",
+        "app_id": "test-app",
+        "app_version": "1.9.0",
+        "action": "upgrade"
+      },
+      "expected": {
+        "installationId": "00000000-0000-7000-8000-000000000004",
+        "installationRevision": 3,
+        "appVersion": "1.9.0",
+        "releaseDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "workloadUID": "00000000-0000-4000-8000-000000000005",
+        "policyRevision": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    }
+  },
+  {
+    "name": "unsafe-revision",
+    "valid": false,
+    "input": {
+      "schemaVersion": 1,
+      "command": {
+        "request_id": "trace-one",
+        "idempotency_key": "command-key-one",
+        "organization_id": "00000000-0000-7000-8000-000000000002",
+        "station_id": "00000000-0000-7000-8000-000000000003",
+        "app_id": "test-app",
+        "app_version": "1.9.0",
+        "action": "start"
+      },
+      "expected": {
+        "installationId": "00000000-0000-7000-8000-000000000004",
+        "installationRevision": 9007199254740992,
+        "appVersion": "1.9.0",
+        "releaseDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "workloadUID": "00000000-0000-4000-8000-000000000005",
+        "policyRevision": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    }
+  },
+  {
+    "name": "noncanonical-uuid",
+    "valid": false,
+    "input": {
+      "schemaVersion": 1,
+      "command": {
+        "request_id": "trace-one",
+        "idempotency_key": "command-key-one",
+        "organization_id": "00000000-0000-7000-8000-000000000002",
+        "station_id": "invalid",
+        "app_id": "test-app",
+        "app_version": "1.9.0",
+        "action": "start"
+      },
+      "expected": {
+        "installationId": "00000000-0000-7000-8000-000000000004",
+        "installationRevision": 3,
+        "appVersion": "1.9.0",
+        "releaseDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "workloadUID": "00000000-0000-4000-8000-000000000005",
+        "policyRevision": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    }
+  },
+  {
+    "name": "foreign-protocol",
+    "valid": false,
+    "input": {
+      "schemaVersion": 2,
+      "command": {
+        "request_id": "trace-one",
+        "idempotency_key": "command-key-one",
+        "organization_id": "00000000-0000-7000-8000-000000000002",
+        "station_id": "00000000-0000-7000-8000-000000000003",
+        "app_id": "test-app",
+        "app_version": "1.9.0",
+        "action": "start"
+      },
+      "expected": {
+        "installationId": "00000000-0000-7000-8000-000000000004",
+        "installationRevision": 3,
+        "appVersion": "1.9.0",
+        "releaseDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "workloadUID": "00000000-0000-4000-8000-000000000005",
+        "policyRevision": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    }
+  },
+  {
+    "name": "mutable-release-ref",
+    "valid": false,
+    "input": {
+      "schemaVersion": 1,
+      "command": {
+        "request_id": "trace-one",
+        "idempotency_key": "command-key-one",
+        "organization_id": "00000000-0000-7000-8000-000000000002",
+        "station_id": "00000000-0000-7000-8000-000000000003",
+        "app_id": "test-app",
+        "app_version": "1.9.0",
+        "action": "start"
+      },
+      "expected": {
+        "installationId": "00000000-0000-7000-8000-000000000004",
+        "installationRevision": 3,
+        "appVersion": "1.9.0",
+        "releaseDigest": "latest",
+        "workloadUID": "00000000-0000-4000-8000-000000000005",
+        "policyRevision": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    }
+  },
+  {
+    "name": "unexpected-template",
+    "valid": false,
+    "input": {
+      "schemaVersion": 1,
+      "command": {
+        "request_id": "trace-one",
+        "idempotency_key": "command-key-one",
+        "organization_id": "00000000-0000-7000-8000-000000000002",
+        "station_id": "00000000-0000-7000-8000-000000000003",
+        "app_id": "test-app",
+        "app_version": "1.9.0",
+        "action": "start"
+      },
+      "expected": {
+        "installationId": "00000000-0000-7000-8000-000000000004",
+        "installationRevision": 3,
+        "appVersion": "1.9.0",
+        "releaseDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "workloadUID": "00000000-0000-4000-8000-000000000005",
+        "policyRevision": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "template": {}
+      }
+    }
+  }
+]

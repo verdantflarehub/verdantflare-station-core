@@ -1,6 +1,7 @@
 package migrations
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/google/uuid"
@@ -10,6 +11,13 @@ import (
 // Seed the previous schema only in a disposable database, then compare every
 // retained row, including timestamps and both sides of the operation relation.
 func TestTransitionUpgradePreservesInstallationHistory(t *testing.T) {
+	testOperationJournalUpgrade(t, 13, "station.app_installation_transitions")
+}
+func TestAppCenterUpgradePreservesInstallationHistory(t *testing.T) {
+	testOperationJournalUpgrade(t, 15, "station.appcenter_operation_inputs")
+}
+func testOperationJournalUpgrade(t *testing.T, previous int, table string) {
+	t.Helper()
 	ctx := t.Context()
 	pool := testdb.New(t)
 	all, err := load()
@@ -19,7 +27,7 @@ func TestTransitionUpgradePreservesInstallationHistory(t *testing.T) {
 	if _, err = pool.Exec(ctx, `CREATE SCHEMA station; CREATE TABLE station.schema_migrations(version integer PRIMARY KEY,name text NOT NULL,checksum text NOT NULL,applied_at timestamptz NOT NULL DEFAULT now())`); err != nil {
 		t.Fatal(err)
 	}
-	for _, m := range all[:13] {
+	for _, m := range all[:previous] {
 		if _, err = pool.Exec(ctx, m.sql); err != nil {
 			t.Fatal(err)
 		}
@@ -47,7 +55,7 @@ func TestTransitionUpgradePreservesInstallationHistory(t *testing.T) {
 	queries := []string{
 		`SELECT row_to_json(i)::text FROM station.app_installations i`,
 		`SELECT row_to_json(o)::text FROM station.app_operations o`,
-		`SELECT json_agg(m ORDER BY version)::text FROM station.schema_migrations m WHERE version<=13`,
+		fmt.Sprintf(`SELECT json_agg(m ORDER BY version)::text FROM station.schema_migrations m WHERE version<=%d`, previous),
 	}
 	before := make([]string, len(queries))
 	for i, q := range queries {
@@ -73,7 +81,7 @@ func TestTransitionUpgradePreservesInstallationHistory(t *testing.T) {
 		}
 	}
 	var count int
-	if err = pool.QueryRow(ctx, `SELECT count(*) FROM station.app_installation_transitions`).Scan(&count); err != nil || count != 0 {
-		t.Fatal("transition table not initialized empty", err)
+	if err = pool.QueryRow(ctx, `SELECT count(*) FROM `+table).Scan(&count); err != nil || count != 0 {
+		t.Fatal("new operation journal not initialized empty", err)
 	}
 }
