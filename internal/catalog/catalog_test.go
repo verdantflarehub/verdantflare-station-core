@@ -93,3 +93,42 @@ func TestCatalogConfigAndModelStatus(t *testing.T) {
 		t.Fatal("unsafe namespace accepted")
 	}
 }
+
+func TestCatalogSystemApplications(t *testing.T) {
+	entries := []Entry{}
+	for _, id := range []string{"project", "world", "network", "resources"} {
+		entries = append(entries, Entry{AppID: id, DisplayName: id, GroupID: "system", Brand: "vf", Models: []string{}, Source: "deploys/apps.yaml", Namespace: "verdantflare-station", WorkloadName: "app-" + id, Version: "0.1.0", Images: []Image{{"app", "example.invalid/" + id + ":0.1.0"}}})
+	}
+	path := filepath.Join(t.TempDir(), "catalog.json")
+	write := func() {
+		t.Helper()
+		data, err := json.Marshal(entries)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write()
+	s, err := Load(path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.List(context.Background(), "system")) != 4 || len(s.List(context.Background(), "desktop")) != 0 {
+		t.Fatal("system catalog filtering failed")
+	}
+	for _, entry := range entries {
+		item, found := s.Get(context.Background(), entry.AppID)
+		if !found || item.GroupID != "system" || item.ModelStatus != "not_required" || item.Deployment.State != "unknown" {
+			t.Fatal("system catalog identity or unobserved state changed")
+		}
+	}
+	for _, group := range []string{"System", "unknown", ""} {
+		entries[0].GroupID = group
+		write()
+		if _, err := Load(path, nil); err == nil {
+			t.Fatalf("unsupported group %q accepted", group)
+		}
+	}
+}

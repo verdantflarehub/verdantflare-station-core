@@ -10,6 +10,26 @@ import (
 	"testing"
 )
 
+func TestSystemGroupDiscoveryEligibility(t *testing.T) {
+	var source deployment
+	if err := json.Unmarshal([]byte(`{"metadata":{"name":"system-tool","namespace":"verdantflare-station","generation":1,"labels":{"app.kubernetes.io/name":"system-tool","app.kubernetes.io/version":"0.1.0","apps.verdantflare.com/managed":"true","apps.verdantflare.com/group":"system","apps.verdantflare.com/brand":"vf"}},"spec":{"replicas":1,"template":{"spec":{"containers":[{"name":"app","image":"example.invalid/system-tool:0.1.0"}]}}},"status":{"observedGeneration":1,"replicas":1,"readyReplicas":1,"availableReplicas":1,"updatedReplicas":1}}`), &source); err != nil {
+		t.Fatal(err)
+	}
+	item, accepted := itemFromDeployment(&source)
+	if !accepted || item.GroupID != "system" || item.AppID != "system-tool" || item.Deployment.State != "ready" {
+		t.Fatal("eligible system application omitted from discovery")
+	}
+	source.Metadata.Labels["apps.verdantflare.com/managed"] = "false"
+	if _, accepted := itemFromDeployment(&source); accepted {
+		t.Fatal("system group bypassed managed workload requirement")
+	}
+	source.Metadata.Labels["apps.verdantflare.com/managed"] = "true"
+	source.Metadata.Labels["apps.verdantflare.com/group"] = "unknown"
+	if _, accepted := itemFromDeployment(&source); accepted {
+		t.Fatal("unsupported discovery group accepted")
+	}
+}
+
 func TestDynamicDiscovery_ClusterWide(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "GET" && r.URL.Path == "/apis/apps/v1/deployments" {

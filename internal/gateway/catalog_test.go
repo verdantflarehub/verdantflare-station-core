@@ -10,12 +10,57 @@ import (
 	"github.com/verdantflarehub/verdantflare-station-core/migrations"
 	"io"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 )
+
+func TestSystemGroupCatalogQuery(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "catalog.json")
+	entry := catalog.Entry{AppID: "project", DisplayName: "Project", GroupID: "system", Brand: "vf", Models: []string{}, Source: "deploys/app-project.yaml", Namespace: "verdantflare-station", WorkloadName: "app-project", Version: "0.1.0", Images: []catalog.Image{{Component: "app", Image: "example.invalid/project:0.1.0"}}}
+	payload, err := json.Marshal([]catalog.Entry{entry})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(path, payload, 0600); err != nil {
+		t.Fatal(err)
+	}
+	apps, err := catalog.Load(path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{Catalog: apps}
+	admin := identity.IdentityContext{StationID: "test-station", OrganizationID: "test-organization", Roles: []string{"admin"}, Scopes: []string{"app:read"}}
+	for _, test := range []struct {
+		name, target string
+		user         identity.IdentityContext
+		status       int
+	}{
+		{"system filter", "/catalog/apps?group_id=system", admin, http.StatusOK},
+		{"system detail", "/catalog/apps/project", admin, http.StatusOK},
+		{"unknown group", "/catalog/apps?group_id=unknown", admin, http.StatusBadRequest},
+		{"duplicate group", "/catalog/apps?group_id=system&group_id=video", admin, http.StatusBadRequest},
+		{"admin required", "/catalog/apps?group_id=system", identity.IdentityContext{Scopes: []string{"app:read"}}, http.StatusForbidden},
+		{"read scope required", "/catalog/apps?group_id=system", identity.IdentityContext{Roles: []string{"admin"}}, http.StatusForbidden},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			s.serveCatalog(response, httptest.NewRequest(http.MethodGet, test.target, nil), context.Background(), "system-query", test.user)
+			if response.Code != test.status {
+				t.Fatalf("status %d, want %d", response.Code, test.status)
+			}
+			if test.name == "system filter" {
+				var list catalog.List
+				if json.Unmarshal(response.Body.Bytes(), &list) != nil || len(list.Items) != 1 || list.Items[0].AppID != "project" || list.Items[0].GroupID != "system" || list.Items[0].Deployment.State != "unknown" {
+					t.Fatal("system filter response changed identity or invented installed state")
+				}
+			}
+		})
+	}
+}
 
 func TestCatalogHTTP(t *testing.T) {
 	ctx := context.Background()
