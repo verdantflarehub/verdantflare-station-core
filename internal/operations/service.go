@@ -11,6 +11,7 @@ import (
 	"github.com/verdantflarehub/verdantflare-station-core/internal/catalog"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/identity"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/releasebinding"
+	pb "github.com/verdantflarehub/verdantflare-station-core/internal/runtimev1"
 	"slices"
 	"time"
 )
@@ -49,6 +50,7 @@ type Service struct {
 	StationID          string
 	Releases           *releasebinding.Source
 	TransitionReleases *TransitionReleases
+	AppCenterRuntime   pb.AppCenterRuntimeClient
 }
 
 func (s *Service) Submit(ctx context.Context, u identity.IdentityContext, c Command) (Operation, error) {

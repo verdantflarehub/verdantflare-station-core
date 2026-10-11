@@ -128,6 +128,7 @@ func run() int {
 			return 1
 		}
 		defer conn.Close()
+		ops.AppCenterRuntime = pb.NewAppCenterRuntimeClient(conn)
 		workerCtx, stopWorker := context.WithCancel(ctx)
 		workerDone := make(chan struct{})
 		go func() { defer close(workerDone); ops.Run(workerCtx, pb.NewAppRuntimeClient(conn), logger) }()

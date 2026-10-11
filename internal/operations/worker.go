@@ -31,21 +31,25 @@ func (s *Service) DispatchOne(ctx context.Context, client pb.AppRuntimeClient) (
 	if err != nil {
 		return false, err
 	}
-	// Never silently strip a constrained operation's durable binding into the
-	// legacy Runtime protocol. This guard is replaced only by a verified bound
-	// dispatch path, before the new submitter can be exposed publicly.
-	var constrained bool
-	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM station.appcenter_operation_inputs WHERE operation_id=$1)`, in.OperationId).Scan(&constrained); err != nil {
+	var preparedRaw, executionRaw, requestHash []byte
+	var idempotencyKey string
+	err = tx.QueryRow(ctx, `SELECT i.prepared,i.execution,o.request_hash,o.idempotency_key FROM station.appcenter_operation_inputs i JOIN station.app_operations o USING(operation_id) WHERE i.operation_id=$1`, in.OperationId).Scan(&preparedRaw, &executionRaw, &requestHash, &idempotencyKey)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return true, err
 	}
+	constrained := err == nil
+	var bound *pb.AppCenterRequest
+	if constrained && s.AppCenterRuntime == nil {
+		return postponeDispatch(ctx, tx, in.OperationId, ErrAppCenterDispatch)
+	}
 	if constrained {
-		if _, err = tx.Exec(ctx, `UPDATE station.app_operations SET updated_at=now() WHERE operation_id=$1`, in.OperationId); err != nil {
-			return true, err
+		if len(bindingRaw) != 0 {
+			return postponeDispatch(ctx, tx, in.OperationId, ErrAppCenterBinding)
 		}
-		if err = tx.Commit(ctx); err != nil {
-			return true, err
+		bound, err = appCenterDispatchInput(in, preparedRaw, executionRaw, requestHash, idempotencyKey)
+		if err != nil {
+			return postponeDispatch(ctx, tx, in.OperationId, err)
 		}
-		return true, ErrAppCenterDispatch
 	}
 	if len(bindingRaw) > 0 {
 		var binding releasebinding.Binding
@@ -56,7 +60,13 @@ func (s *Service) DispatchOne(ctx context.Context, client pb.AppRuntimeClient) (
 	}
 	callCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
-	progress, callErr := client.Reconcile(callCtx, in)
+	var progress *pb.AppProgress
+	var callErr error
+	if constrained {
+		progress, callErr = s.AppCenterRuntime.ReconcileBound(callCtx, bound)
+	} else {
+		progress, callErr = client.Reconcile(callCtx, in)
+	}
 	if callErr != nil {
 		switch status.Code(callErr) {
 		case codes.InvalidArgument, codes.PermissionDenied, codes.AlreadyExists, codes.FailedPrecondition:
@@ -71,17 +81,10 @@ func (s *Service) DispatchOne(ctx context.Context, client pb.AppRuntimeClient) (
 			progress = &pb.AppProgress{OperationId: in.OperationId, Status: "failed", Phase: "checking", ErrorCode: code, ErrorMessage: message}
 		default:
 			// Touch only scheduling time so one offline/slow app cannot starve the queue.
-			_, err = tx.Exec(ctx, `UPDATE station.app_operations SET updated_at=now() WHERE operation_id=$1`, in.OperationId)
-			if err != nil {
-				return true, err
-			}
-			if err = tx.Commit(ctx); err != nil {
-				return true, err
-			}
-			return true, callErr
+			return postponeDispatch(ctx, tx, in.OperationId, callErr)
 		}
 	}
-	if progress.OperationId != in.OperationId || !validProgress(progress) {
+	if progress == nil || progress.OperationId != in.OperationId || !validProgress(progress) {
 		return true, errors.New("invalid runtime progress")
 	}
 	_, err = tx.Exec(ctx, `UPDATE station.app_operations SET status=$2,phase=$3,downloaded_bytes=$4,total_bytes=$5,error_code=NULLIF($6,''),error_message=NULLIF($7,''),updated_at=now() WHERE operation_id=$1`, in.OperationId, progress.Status, progress.Phase, progress.DownloadedBytes, progress.TotalBytes, progress.ErrorCode, progress.ErrorMessage)
@@ -93,6 +96,17 @@ func (s *Service) DispatchOne(ctx context.Context, client pb.AppRuntimeClient) (
 	}
 	return true, tx.Commit(ctx)
 }
+
+func postponeDispatch(ctx context.Context, tx pgx.Tx, id string, pending error) (bool, error) {
+	if _, err := tx.Exec(ctx, `UPDATE station.app_operations SET updated_at=now() WHERE operation_id=$1`, id); err != nil {
+		return true, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return true, err
+	}
+	return true, pending
+}
+
 func validProgress(p *pb.AppProgress) bool {
 	if p.DownloadedBytes < 0 || p.TotalBytes != nil && (*p.TotalBytes < 0 || p.DownloadedBytes > *p.TotalBytes) {
 		return false
