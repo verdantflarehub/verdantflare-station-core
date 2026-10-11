@@ -69,8 +69,7 @@ func appCenterHash(in AppCenterCommand) [32]byte {
 	return sha256.Sum256(raw)
 }
 
-// SubmitAppCenter is intentionally not wired to a gateway until the prepared
-// command UI, controlled admission reader and guarded Runtime path are ready.
+// The gateway supplies a production reader from controlled configuration.
 // Keeping admission outside the request also makes prepared data no authority.
 func (s *Service) SubmitAppCenter(ctx context.Context, u identity.IdentityContext, in AppCenterCommand, admission AppCenterAdmission) (Operation, error) {
 	if !s.canReadInstallations(u) || !slices.Contains(u.Scopes, "app:manage") {

@@ -20,6 +20,10 @@ type protectedRuntimeStub struct {
 	err   error
 }
 
+func (s *protectedRuntimeStub) InspectBound(context.Context, *pb.AppCenterInspection, ...grpc.CallOption) (*pb.AppCenterObservation, error) {
+	return nil, status.Error(codes.Unimplemented, "inspection not configured")
+}
+
 func (s *protectedRuntimeStub) ReconcileBound(_ context.Context, in *pb.AppCenterRequest, _ ...grpc.CallOption) (*pb.AppProgress, error) {
 	s.calls = append(s.calls, proto.Clone(in).(*pb.AppCenterRequest))
 	if s.err != nil {

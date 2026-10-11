@@ -333,8 +333,8 @@ func Build(user identity.IdentityContext, request string, now time.Time, catalog
 		if item.Installation != nil {
 			version = item.Installation.AppVersion
 		}
-		// The new constrained submitter is a later delivery slice. Do not
-		// advertise writes merely because historical AppCommand accepts them.
+		// The base snapshot is conservative; operations enriches it only through
+		// the trusted admission reader. Historical AppCommand grants no capability.
 		reason := "ACTION_UNSUPPORTED"
 		if !slices.Contains(user.Scopes, "app:manage") {
 			reason = "PERMISSION_DENIED"
@@ -366,11 +366,17 @@ func Build(user identity.IdentityContext, request string, now time.Time, catalog
 		at := f.GeneratedAt
 		f.Sources = append(f.Sources, SourceStatus{Source: name, Quality: quality, ObservedAt: &at, ReasonCode: reason})
 	}
-	f.Revision = semanticRevision(f)
+	f.RecomputeRevision()
+	return f, nil
+}
+
+// RecomputeRevision is called after authoritative lifecycle enrichment. A
+// changed policy/candidate must change the same snapshot consumed by Studio.
+func (f *Facts) RecomputeRevision() {
+	f.Revision = semanticRevision(*f)
 	for i := range f.Sources {
 		f.Sources[i].Revision = Text(f.Revision)
 	}
-	return f, nil
 }
 func (r Record) LastOperationIDValue() string {
 	if r.LastOperationID == nil {

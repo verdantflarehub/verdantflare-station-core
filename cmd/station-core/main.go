@@ -134,6 +134,9 @@ func run() int {
 		go func() { defer close(workerDone); ops.Run(workerCtx, pb.NewAppRuntimeClient(conn), logger) }()
 		defer func() { stopWorker(); <-workerDone }()
 	}
+	if path := os.Getenv("STATION_APPCENTER_COMMAND_REGISTRY"); path != "" {
+		ops.AppCenterAdmissionSource = &operations.AppCenterAdmissionSource{Path: path, Signed: ops.Releases, Management: ops.TransitionReleases, Runtime: ops.AppCenterRuntime}
+	}
 
 	telemetryURL := os.Getenv("STATION_PROMETHEUS_URL")
 	if telemetryURL == "" {

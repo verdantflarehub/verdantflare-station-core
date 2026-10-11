@@ -229,6 +229,7 @@ func (s *Server) ServeHTTP(original http.ResponseWriter, r *http.Request) {
 	}
 	routes := map[string]string{
 		"/appcenter/v1/facts":                      "GET",
+		"/appcenter/v1/commands":                   "POST",
 		"/internal/v1/app-installations/authorize": "POST",
 		"/preinstalled/commands":                   "POST",
 		"/internal/v1/app-access":                  "POST",
@@ -392,6 +393,10 @@ func (s *Server) ServeHTTP(original http.ResponseWriter, r *http.Request) {
 	sessionID = user.SessionID
 	if route == "/appcenter/v1/facts" {
 		s.serveAppCenter(w, r, ctx, requestID, user)
+		return
+	}
+	if route == "/appcenter/v1/commands" {
+		s.serveAppCenterCommand(w, r, ctx, requestID, user)
 		return
 	}
 	if strings.HasPrefix(route, "/preinstalled/") {

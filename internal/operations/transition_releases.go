@@ -89,32 +89,14 @@ func (s *TransitionReleases) Read(ctx context.Context, actor identity.IdentityCo
 		actor.StationID != installed.StationID || actor.OrganizationID != installed.OrganizationID || installed.State != "installed" {
 		return zero, zero, ErrTransitionRelease
 	}
-	root, err := os.OpenRoot(filepath.Dir(s.Path))
-	if err != nil {
-		return zero, zero, ErrTransitionRelease
-	}
-	defer root.Close()
-	raw, err := materialRead(ctx, root, filepath.Base(s.Path), 2<<20)
+	root, entries, err := s.load(ctx)
 	if err != nil {
 		return zero, zero, err
 	}
-	var registry struct {
-		SchemaVersion int                      `json:"schema_version"`
-		Releases      []transitionReleaseEntry `json:"releases"`
-	}
-	if materialDecode(raw, &registry) != nil || registry.SchemaVersion != 1 || len(registry.Releases) == 0 || len(registry.Releases) > 128 {
-		return zero, zero, ErrTransitionRelease
-	}
-	refs, versions := map[string]bool{}, map[string]bool{}
+	defer root.Close()
 	var source, target *transitionReleaseEntry
-	for i := range registry.Releases {
-		e := &registry.Releases[i]
-		version := e.Snapshot.AppID + "@" + e.Snapshot.AppVersion
-		if !e.Snapshot.valid() || refs[e.Snapshot.ReleaseRef] || versions[version] ||
-			!materialPath(e.ManifestRef) || !materialPath(e.ReleaseIndexRef) {
-			return zero, zero, ErrTransitionRelease
-		}
-		refs[e.Snapshot.ReleaseRef], versions[version] = true, true
+	for i := range entries {
+		e := &entries[i]
 		if e.Snapshot.AppID == installed.AppID && e.Snapshot.AppVersion == installed.AppVersion {
 			source = e
 		}
@@ -126,6 +108,59 @@ func (s *TransitionReleases) Read(ctx context.Context, actor identity.IdentityCo
 		return zero, zero, ErrTransitionRelease
 	}
 	return source.Snapshot, target.Snapshot, nil
+}
+
+// Resolve verifies one exact immutable release for ordinary lifecycle admission.
+// It does not create an installation or infer authority from an app name.
+func (s *TransitionReleases) Resolve(ctx context.Context, appID, version, ref string) (TransitionSnapshot, error) {
+	root, entries, err := s.load(ctx)
+	if err != nil {
+		return TransitionSnapshot{}, err
+	}
+	defer root.Close()
+	for _, entry := range entries {
+		if entry.Snapshot.AppID == appID && entry.Snapshot.AppVersion == version && entry.Snapshot.ReleaseRef == ref {
+			if err := verifyTransitionMaterial(ctx, root, entry); err != nil {
+				return TransitionSnapshot{}, err
+			}
+			return entry.Snapshot, nil
+		}
+	}
+	return TransitionSnapshot{}, ErrTransitionRelease
+}
+
+func (s *TransitionReleases) load(ctx context.Context) (*os.Root, []transitionReleaseEntry, error) {
+	if s == nil || s.Path == "" || ctx.Err() != nil {
+		return nil, nil, ErrTransitionRelease
+	}
+	root, err := os.OpenRoot(filepath.Dir(s.Path))
+	if err != nil {
+		return nil, nil, ErrTransitionRelease
+	}
+	fail := func() (*os.Root, []transitionReleaseEntry, error) {
+		root.Close()
+		return nil, nil, ErrTransitionRelease
+	}
+	raw, err := materialRead(ctx, root, filepath.Base(s.Path), 2<<20)
+	if err != nil {
+		return fail()
+	}
+	var registry struct {
+		SchemaVersion int                      `json:"schema_version"`
+		Releases      []transitionReleaseEntry `json:"releases"`
+	}
+	if materialDecode(raw, &registry) != nil || registry.SchemaVersion != 1 || len(registry.Releases) == 0 || len(registry.Releases) > 128 {
+		return fail()
+	}
+	refs, versions := map[string]bool{}, map[string]bool{}
+	for _, entry := range registry.Releases {
+		version := entry.Snapshot.AppID + "@" + entry.Snapshot.AppVersion
+		if !entry.Snapshot.valid() || refs[entry.Snapshot.ReleaseRef] || versions[version] || !materialPath(entry.ManifestRef) || !materialPath(entry.ReleaseIndexRef) {
+			return fail()
+		}
+		refs[entry.Snapshot.ReleaseRef], versions[version] = true, true
+	}
+	return root, registry.Releases, nil
 }
 
 func verifyTransitionMaterial(ctx context.Context, root *os.Root, entry transitionReleaseEntry) error {

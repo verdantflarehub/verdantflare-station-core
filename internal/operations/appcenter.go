@@ -87,8 +87,38 @@ func (s *Service) AppCenterFacts(ctx context.Context, user identity.IdentityCont
 	if len(operations) > 1000 {
 		return empty, appcenter.ErrLimit
 	}
+	// Preserve global installation exclusion without exposing another owner's
+	// installation identity through the scope-filtered facts response.
+	foreign := map[string]bool{}
+	if s.AppCenterAdmissionSource != nil {
+		rows, err = tx.Query(ctx, `SELECT app_id FROM station.app_installations WHERE station_id=$1 AND organization_id<>$2 AND state<>'removed' LIMIT 1001`, s.StationID, user.OrganizationID)
+		if err != nil {
+			return empty, appcenter.ErrUnavailable
+		}
+		for rows.Next() {
+			var app string
+			if err := rows.Scan(&app); err != nil {
+				rows.Close()
+				return empty, appcenter.ErrUnavailable
+			}
+			foreign[app] = true
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return empty, appcenter.ErrUnavailable
+		}
+		if len(foreign) > 1000 {
+			return empty, appcenter.ErrLimit
+		}
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return empty, appcenter.ErrUnavailable
 	}
-	return appcenter.Build(user, requestID, time.Now(), catalogItems, installations, operations)
+	facts, err := appcenter.Build(user, requestID, time.Now(), catalogItems, installations, operations)
+	if err != nil {
+		return empty, err
+	}
+	s.AppCenterAdmissionSource.project(ctx, user, &facts, foreign)
+	return facts, nil
 }
