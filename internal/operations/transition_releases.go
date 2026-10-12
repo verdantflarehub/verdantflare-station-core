@@ -129,6 +129,35 @@ func (s *TransitionReleases) Resolve(ctx context.Context, appID, version, ref st
 	return TransitionSnapshot{}, ErrTransitionRelease
 }
 
+// AuthorizeWorkerVersion keeps management authentication exact. Only worker
+// callers use verified compatibility for a different installed manager version.
+func (s *Service) AuthorizeWorkerVersion(ctx context.Context, installed Installation, version string) error {
+	if installed.State != "installed" || installed.StationID != s.StationID || installed.Revision < 1 {
+		return identity.Denied
+	}
+	if installed.AppVersion == version {
+		return nil
+	}
+	root, entries, err := s.TransitionReleases.load(ctx)
+	if err != nil {
+		return ErrTransitionRelease
+	}
+	defer root.Close()
+	for _, entry := range entries {
+		if entry.Snapshot.AppID != installed.AppID || entry.Snapshot.AppVersion != installed.AppVersion {
+			continue
+		}
+		if err := verifyTransitionMaterial(ctx, root, entry); err != nil {
+			return ErrTransitionRelease
+		}
+		if slices.Contains(entry.Snapshot.CompatibleWorkerVersions, version) {
+			return nil
+		}
+		return identity.Denied
+	}
+	return ErrTransitionRelease
+}
+
 func (s *TransitionReleases) load(ctx context.Context) (*os.Root, []transitionReleaseEntry, error) {
 	if s == nil || s.Path == "" || ctx.Err() != nil {
 		return nil, nil, ErrTransitionRelease

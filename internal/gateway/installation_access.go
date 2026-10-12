@@ -22,6 +22,7 @@ type InstallationAccess struct {
 	callers      map[[32]byte]string
 	manager      func(context.Context, string, string, func(context.Context) error) error
 	installation func(context.Context, identity.IdentityContext, string) (operations.Installation, error)
+	worker       func(context.Context, operations.Installation, string) error
 }
 
 func LoadInstallationAccess(path string, lookup func(string) string, service *identity.Service, ops *operations.Service) (*InstallationAccess, error) {
@@ -43,7 +44,7 @@ func LoadInstallationAccess(path string, lookup func(string) string, service *id
 	if strictjson.Decode(f, 64<<10, &entries) != nil || len(entries) == 0 || len(entries) > 128 {
 		return nil, errors.New("invalid installation access registry")
 	}
-	out := &InstallationAccess{callers: map[[32]byte]string{}, manager: service.WithManager, installation: ops.GetInstallation}
+	out := &InstallationAccess{callers: map[[32]byte]string{}, manager: service.WithManager, installation: ops.GetInstallation, worker: ops.AuthorizeWorkerVersion}
 	seen := map[string]bool{}
 	for _, entry := range entries {
 		if !regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`).MatchString(entry.AppID) || seen[entry.AppID] ||
@@ -94,7 +95,19 @@ func (s *Server) installationAccess(w http.ResponseWriter, r *http.Request, requ
 		InstallationID string `json:"installation_id"`
 		AppVersion     string `json:"app_version"`
 	}
-	if decode(w, r, &in, false) != nil {
+	worker := r.URL.Path == "/internal/v1/app-installations/authorize-worker"
+	var decodeErr error
+	if worker {
+		var request struct {
+			InstallationID string `json:"installation_id"`
+			WorkerVersion  string `json:"worker_version"`
+		}
+		decodeErr = decode(w, r, &request, false)
+		in.InstallationID, in.AppVersion = request.InstallationID, request.WorkerVersion
+	} else {
+		decodeErr = decode(w, r, &in, false)
+	}
+	if decodeErr != nil {
 		failure(w, requestID, identity.Invalid)
 		return
 	}
@@ -118,16 +131,33 @@ func (s *Server) installationAccess(w http.ResponseWriter, r *http.Request, requ
 			return err
 		}
 		if item.InstallationID != in.InstallationID || item.StationID != actor.StationID || item.OrganizationID != org ||
-			item.AppID != app || item.AppVersion != in.AppVersion || item.State != "installed" || item.Revision < 1 {
+			item.AppID != app || item.State != "installed" || item.Revision < 1 {
+			return identity.Denied
+		}
+		if worker {
+			if a.worker == nil {
+				return operations.ErrTransitionRelease
+			}
+			return a.worker(ctx, item, in.AppVersion)
+		}
+		if item.AppVersion != in.AppVersion {
 			return identity.Denied
 		}
 		return nil
 	})
 	if err != nil {
+		if errors.Is(err, operations.ErrTransitionRelease) {
+			reply(w, 503, ErrorResponse{"SERVICE_UNAVAILABLE", "Worker compatibility is unavailable", requestID})
+			return
+		}
 		failure(w, requestID, err)
 		return
 	}
-	reply(w, 200, map[string]any{"schema_version": 1, "installation_id": item.InstallationID, "app_id": app,
+	out := map[string]any{"schema_version": 1, "installation_id": item.InstallationID, "app_id": app,
 		"app_version": item.AppVersion, "station_id": item.StationID, "organization_id": org, "user_id": user,
-		"installation_revision": item.Revision, "request_id": requestID})
+		"installation_revision": item.Revision, "request_id": requestID}
+	if worker {
+		out["worker_version"] = in.AppVersion
+	}
+	reply(w, 200, out)
 }
