@@ -173,6 +173,9 @@ func (s *Service) DispatchTransition(ctx context.Context, operation string, runt
 	case "release_source", "release_target":
 		// Once release could have happened, new work could be admitted. Neither
 		// an error nor a recovery response permits swapping out that workload.
+		if progress.Phase == "releasing" {
+			break // Runtime committed release intent; await the next durable step.
+		}
 		if progress.Phase != "released" {
 			return r.Transition, ErrTransitionProgress
 		}

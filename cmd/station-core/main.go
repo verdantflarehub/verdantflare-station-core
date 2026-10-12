@@ -137,6 +137,17 @@ func run() int {
 	if path := os.Getenv("STATION_APPCENTER_COMMAND_REGISTRY"); path != "" {
 		ops.AppCenterAdmissionSource = &operations.AppCenterAdmissionSource{Path: path, Signed: ops.Releases, Management: ops.TransitionReleases, Runtime: ops.AppCenterRuntime}
 	}
+	transitionRuntime, err := operations.NewHTTPTransitionRuntime(os.Getenv("STATION_APP_TRANSITION_RUNTIME_ORIGIN"), os.Getenv("STATION_APP_TRANSITION_CONTROL_TOKEN"))
+	if err != nil {
+		logger.Error("invalid_transition_runtime_configuration")
+		return 1
+	}
+	if transitionRuntime != nil {
+		transitionCtx, stopTransitions := context.WithCancel(ctx)
+		transitionDone := make(chan struct{})
+		go func() { defer close(transitionDone); ops.RunTransitions(transitionCtx, transitionRuntime, logger) }()
+		defer func() { stopTransitions(); <-transitionDone }()
+	}
 
 	telemetryURL := os.Getenv("STATION_PROMETHEUS_URL")
 	if telemetryURL == "" {
