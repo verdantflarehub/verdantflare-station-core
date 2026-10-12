@@ -89,15 +89,15 @@ func (m *Memory) catalogSnapshot(organization string, entries []catalog.Entry, b
 // catalogPosition requires m.mu. A trusted position grants no ownership;
 // foreign/unbound/instance occupants expose only the existing unknown result.
 func (m *Memory) catalogPosition(e catalog.Entry, now time.Time) catalog.Observation {
-	obs := catalog.Observation{State: "unknown", Reason: "NOT_SYNCED", Images: []catalog.Image{}}
+	obs := catalog.Observation{State: "unknown", Reason: "unavailable", Images: []catalog.Image{}}
 	for _, c := range m.collectors {
 		if !slices.Contains(c.config.Namespaces, e.Namespace) {
 			continue
 		}
 		if _, occupied := c.objects[e.Namespace+"/"+e.WorkloadName]; occupied {
-			obs.Reason = "WORKLOAD_BINDING_MISSING"
+			obs.Reason = "unavailable"
 		} else if !c.inventoryAt.IsZero() && now.Before(c.inventoryExpires) {
-			obs.State, obs.Reason, obs.ObservedAt = "not_installed", "RESOURCE_ABSENT", c.inventoryAt
+			obs.State, obs.Reason, obs.ObservedAt = "not_installed", "not_found", c.inventoryAt
 		}
 	}
 	return obs
@@ -105,7 +105,10 @@ func (m *Memory) catalogPosition(e catalog.Entry, now time.Time) catalog.Observa
 
 func catalogObservation(v MemoryView) catalog.Observation {
 	r := v.Resource
-	o := catalog.Observation{State: v.Runtime.State, Reason: v.Runtime.ReasonCode, Images: []catalog.Image{}}
+	// The embedded v1 catalog retains its closed vocabulary. Detailed reasons
+	// belong to the independent state API and the installation service view.
+	state, reason := catalogState(v.Runtime)
+	o := catalog.Observation{State: state, Reason: reason, Images: []catalog.Image{}}
 	if v.Runtime.ObservedAt != nil {
 		o.ObservedAt = *v.Runtime.ObservedAt
 	}
@@ -128,4 +131,23 @@ func catalogObservation(v MemoryView) catalog.Observation {
 		}
 	}
 	return o
+}
+
+func catalogState(runtime Runtime) (string, string) {
+	switch runtime.State {
+	case "absent":
+		return "not_installed", "not_found"
+	case "ready":
+		return "ready", "replicas_ready"
+	case "starting":
+		return "starting", "reconciling"
+	case "stopping":
+		return "stopping", "scaling_down"
+	case "stopped":
+		return "stopped", "scaled_to_zero"
+	case "degraded":
+		return "degraded", "deployment_failed"
+	default:
+		return "unknown", "unavailable"
+	}
 }

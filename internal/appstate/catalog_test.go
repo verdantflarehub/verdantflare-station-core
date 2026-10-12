@@ -1,15 +1,46 @@
 package appstate
 
 import (
+	"bytes"
+	"encoding/json"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/verdantflarehub/verdantflare-station-core/internal/appcenter"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/catalog"
+	"github.com/verdantflarehub/verdantflare-station-core/internal/identity"
 )
 
+func TestMemoryCatalogFactsSatisfyConsumerContract(t *testing.T) {
+	for _, state := range []string{"ready", "starting", "stopping", "stopped", "degraded", "absent", "unknown"} {
+		t.Run(state, func(t *testing.T) {
+			_, _, b, o, now := memoryFixture(t, false)
+			e := catalogEntry(o)
+			e.Source = "deploys/apps/fixture.dp.yaml"
+			o.Metadata = metadataFixture()
+			v := MemoryView{Runtime: Runtime{State: state, ReasonCode: "OBSERVATION_EXPIRED", ObservedAt: now}, Resource: &o}
+			item := catalog.SnapshotItem{Registered: true, Item: catalog.Item{Entry: e, ModelStatus: "not_required", Deployment: catalogObservation(v)}}
+			item.Deployment.Ownership = nil
+			user := identity.IdentityContext{UserID: uuid.Must(uuid.NewV7()).String(), OrganizationID: b.OrganizationID, StationID: o.StationID, Roles: []string{"admin"}, Scopes: []string{"app:read"}}
+			facts, err := appcenter.BuildState(user, uuid.Must(uuid.NewV7()).String(), *now, []catalog.SnapshotItem{item}, nil, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, err := json.Marshal(facts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var decoded appcenter.Facts
+			if appcenter.Decode(bytes.NewReader(raw), "facts", 4<<20, &decoded) != nil {
+				t.Fatal("Core memory projection violates Studio's central facts schema")
+			}
+		})
+	}
+}
+
 func catalogEntry(o ResourceObservation) catalog.Entry {
-	return catalog.Entry{AppID: o.AppID, Namespace: o.Namespace, WorkloadName: o.Name, DisplayName: "Trusted display", GroupID: "system", Brand: "vf", Version: "1.0.0", Models: []string{}, Images: []catalog.Image{{Component: "server", Image: "example.invalid/declared:1"}}}
+	return catalog.Entry{AppID: o.AppID, Namespace: o.Namespace, WorkloadName: o.Name, DisplayName: "Trusted display", GroupID: "system", Brand: "vf", Version: "1.0.0", Source: "deploys/apps/fixture.dp.yaml", Models: []string{}, Images: []catalog.Image{{Component: "server", Image: "example.invalid/declared:1"}}}
 }
 
 func TestMemoryCatalogUsesScopedCoherentProjection(t *testing.T) {
@@ -21,6 +52,16 @@ func TestMemoryCatalogUsesScopedCoherentProjection(t *testing.T) {
 		items, views, err := m.catalogSnapshot(org, []catalog.Entry{e}, []Binding{b})
 		if err != nil {
 			t.Fatal(err)
+		}
+		user := identity.IdentityContext{UserID: uuid.Must(uuid.NewV7()).String(), OrganizationID: org, StationID: o.StationID, Roles: []string{"admin"}, Scopes: []string{"app:read"}}
+		facts, err := appcenter.BuildState(user, uuid.Must(uuid.NewV7()).String(), *now, items, nil, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, _ := json.Marshal(facts)
+		var decoded appcenter.Facts
+		if appcenter.Decode(bytes.NewReader(raw), "facts", 4<<20, &decoded) != nil {
+			t.Fatal("memory lifecycle violated facts contract")
 		}
 		return items, views
 	}
