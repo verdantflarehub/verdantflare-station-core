@@ -6,24 +6,19 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/appcenter"
+	"github.com/verdantflarehub/verdantflare-station-core/internal/appstate"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/identity"
 )
 
 // AppCenterFacts reads installations and operations in one read-only snapshot.
-// Workload observations remain independently timestamped; this is not a
-// transaction spanning PostgreSQL and Kubernetes.
+// Workload observations are copied from Core memory in that transaction. No
+// listing dependency contacts Kubernetes, Runtime, etcd, or an App.
 func (s *Service) AppCenterFacts(ctx context.Context, user identity.IdentityContext, requestID string) (appcenter.Facts, error) {
 	var empty appcenter.Facts
 	if s == nil || !s.canReadInstallations(user) {
 		return empty, identity.Denied
 	}
 	if s.Pool == nil || s.Catalog == nil {
-		return empty, appcenter.ErrUnavailable
-	}
-	// Network observations precede the database snapshot so no database
-	// transaction stays open while waiting for Kubernetes or discovery.
-	catalogItems, err := s.Catalog.Snapshot(ctx)
-	if err != nil {
 		return empty, appcenter.ErrUnavailable
 	}
 	tx, err := s.Pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
@@ -112,10 +107,32 @@ func (s *Service) AppCenterFacts(ctx context.Context, user identity.IdentityCont
 			return empty, appcenter.ErrLimit
 		}
 	}
+	states := s.AppStates
+	if states == nil {
+		// Unconfigured collection still preserves the persistent installation
+		// and local catalog, with unknown observations and no probe fallback.
+		states = &appstate.Service{StationID: s.StationID}
+	}
+	if states.StationID != s.StationID {
+		return empty, appcenter.ErrUnavailable
+	}
+	catalogItems, views, err := states.CatalogSnapshot(ctx, tx, user.OrganizationID, s.Catalog.Entries())
+	if err != nil {
+		return empty, appcenter.ErrUnavailable
+	}
+	services := map[string]appcenter.Service{}
+	for id, v := range views {
+		service := appcenter.Service{Quality: v.Runtime.Quality, State: v.Runtime.State, ReasonCode: appcenter.Text(v.Runtime.ReasonCode), ObservedAt: v.Runtime.ObservedAt}
+		if r := v.Resource; r != nil {
+			service.WorkloadUID = appcenter.Text(r.UID)
+			service.ObservationKey = appcenter.Text("obs:" + appcenter.Digest([]string{r.Namespace, r.Name, r.UID})[7:])
+		}
+		services[id] = service
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return empty, appcenter.ErrUnavailable
 	}
-	facts, err := appcenter.Build(user, requestID, time.Now(), catalogItems, installations, operations)
+	facts, err := appcenter.BuildState(user, requestID, time.Now(), catalogItems, installations, operations, services)
 	if err != nil {
 		return empty, err
 	}

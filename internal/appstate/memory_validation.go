@@ -20,5 +20,21 @@ func validStreamResource(o ResourceObservation, c Collector) bool {
 			return false
 		}
 	}
+	if m := o.Metadata; m != nil {
+		if len(m.TemplateHash) > 128 || m.Images == nil || len(m.Images) > 64 || (!m.ImagesComplete && len(m.Images) != 0) || (m.ImagesComplete && len(m.Images) == 0) {
+			return false
+		}
+		seen := map[string]bool{}
+		for _, image := range m.Images {
+			if !dns(image.Component) || len(image.Image) == 0 || len(image.Image) > 2048 || seen[image.Component] {
+				return false
+			}
+			seen[image.Component] = true
+		}
+		d := m.Discovery
+		if len(d.AppID) > 128 || len(d.GroupID) > 128 || len(d.Brand) > 128 || len(d.Version) > 128 || len(d.DisplayName) > 512 || len(d.Models) > 4096 || len(d.Source) > 1024 {
+			return false
+		}
+	}
 	return true
 }

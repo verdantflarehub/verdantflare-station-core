@@ -94,13 +94,14 @@ func (s *AppCenterAdmissionSource) Admit(ctx context.Context, actor identity.Ide
 	return result.Execution, err
 }
 
-func (s *AppCenterAdmissionSource) Read(ctx context.Context, actor identity.IdentityContext, command Command, installed *Installation) (AppCenterAdmissionResult, error) {
-	var zero AppCenterAdmissionResult
+// resolve verifies only local policy and immutable release material. Listing
+// candidates must never use Runtime inspection as a read dependency.
+func (s *AppCenterAdmissionSource) resolve(ctx context.Context, actor identity.IdentityContext, command Command, installed *Installation) (AppCenterExecution, error) {
+	var zero AppCenterExecution
 	if !slices.Contains(actor.Roles, "admin") || !slices.Contains(actor.Scopes, "app:manage") || !slices.Contains(actor.Scopes, "app:read") ||
 		actor.StationID != command.StationID || actor.OrganizationID != command.OrganizationID {
 		return zero, identity.Denied
 	}
-	installationID := ""
 	if command.Action == "install" {
 		if installed != nil {
 			return zero, ErrAppCenterBinding
@@ -110,7 +111,6 @@ func (s *AppCenterAdmissionSource) Read(ctx context.Context, actor identity.Iden
 			installed.AppVersion != command.AppVersion || installed.State != "installed" {
 			return zero, ErrAppCenterBinding
 		}
-		installationID = installed.InstallationID
 	} else {
 		return zero, ErrAppCenterUnsupported
 	}
@@ -157,11 +157,25 @@ func (s *AppCenterAdmissionSource) Read(ctx context.Context, actor identity.Iden
 		Release, Template string
 	}{
 		"studio.appcenter.admission.v1", *policy, execution.ReleaseDigest, execution.TemplateDigest})
+	return execution, nil
+}
+
+// Read performs the live preflight only when admitting an actual command.
+func (s *AppCenterAdmissionSource) Read(ctx context.Context, actor identity.IdentityContext, command Command, installed *Installation) (AppCenterAdmissionResult, error) {
+	var zero AppCenterAdmissionResult
+	execution, err := s.resolve(ctx, actor, command, installed)
+	if err != nil {
+		return zero, err
+	}
+	installationID := ""
+	if installed != nil {
+		installationID = installed.InstallationID
+	}
 	if s.Runtime == nil {
 		return zero, ErrAppCenterDispatch
 	}
 	observation, err := s.Runtime.InspectBound(ctx, &pb.AppCenterInspection{SchemaVersion: 1, UserId: actor.UserID, OrganizationId: actor.OrganizationID, StationId: actor.StationID,
-		AppId: policy.AppID, AppVersion: policy.AppVersion, Action: command.Action, InstallationId: installationID, TemplateDigest: execution.TemplateDigest})
+		AppId: command.AppID, AppVersion: command.AppVersion, Action: command.Action, InstallationId: installationID, TemplateDigest: execution.TemplateDigest})
 	if err != nil {
 		switch status.Code(err) {
 		case codes.Unimplemented:

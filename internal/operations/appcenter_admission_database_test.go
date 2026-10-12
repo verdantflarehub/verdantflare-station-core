@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/appcenter"
+	"github.com/verdantflarehub/verdantflare-station-core/internal/appstate"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/catalog"
 )
 
@@ -23,20 +23,44 @@ func TestAppCenterAdmissionDatabaseFactsSubmitReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reader := &preinstalledObservation{current: catalog.Observation{State: "stopped", Reason: "scaled_to_zero", ObservedAt: time.Now(), UID: runtime.uid, Images: []catalog.Image{{Component: "server", Image: "example.invalid/test:1.9.0"}}, Ownership: map[string]string{
-		"station.verdantflare.com/station-id": actor.StationID, "station.verdantflare.com/organization-id": actor.OrganizationID,
-		"station.verdantflare.com/app-id": installed.AppID, "station.verdantflare.com/installation-id": installed.InstallationID, "station.verdantflare.com/template-hash": strings.Repeat("a", 64)}}}
+	local, err := source.resolve(ctx, actor, admissionCommand(actor, installed, "start"), &installed)
+	if err != nil {
+		t.Fatal(err)
+	}
 	path := filepath.Join(t.TempDir(), "catalog.json")
 	if err := os.WriteFile(path, []byte(`[{"app_id":"test-app","display_name":"Test","group_id":"video","brand":"vf","models":[],"source":"deploys/test.yaml","namespace":"apps","workload_name":"test-app","version":"1.9.0","images":[{"component":"server","image":"example.invalid/test:1.9.0"}]}]`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	svc.Catalog, err = catalog.Load(path, reader)
+	svc.Catalog, err = catalog.Load(path, noAppCenterProbe{})
 	if err != nil {
 		t.Fatal(err)
+	}
+	memory, err := appstate.NewMemory(actor.StationID, []appstate.Collector{{ID: "runtime", Namespaces: []string{"apps"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.AppStates = &appstate.Service{Pool: svc.Pool, StationID: actor.StationID, Observations: memory}
+	stream, err := memory.Open("runtime")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+	syncID := uuid.NewString()
+	o := appstate.ResourceObservation{Namespace: "apps", Name: installed.AppID, UID: runtime.uid, ResourceVersion: "opaque", StationID: actor.StationID, OrganizationID: actor.OrganizationID, InstallationID: installed.InstallationID, AppID: installed.AppID, Generation: 1, ObservedGeneration: 1, Health: "not_checked",
+		Metadata: &appstate.ResourceMetadata{OwnershipMarked: true, TemplateHash: strings.TrimPrefix(local.TemplateDigest, "sha256:"), ImagesComplete: true, Images: []appstate.ResourceImage{{Component: "server", Image: "example.invalid/test:1.9.0"}}}}
+	if stream.Begin(syncID) != nil || stream.Objects(syncID, []appstate.ResourceObservation{o}) != nil || stream.End(syncID, 1) != nil {
+		t.Fatal("memory snapshot setup failed")
 	}
 	facts, err := svc.AppCenterFacts(ctx, actor, "read")
 	if err != nil || len(facts.Items) != 1 {
 		t.Fatal(facts, err)
+	}
+	if runtime.calls != 0 {
+		t.Fatal("facts consulted Runtime before command submission")
+	}
+	snapshot, err := svc.AppStates.Snapshot(ctx, actor, installed.InstallationID)
+	if err != nil || len(snapshot.Items) != 1 || snapshot.Items[0].Runtime.State != facts.Items[0].Service.State || snapshot.Items[0].Runtime.Quality != facts.Items[0].Service.Quality {
+		t.Fatal("facts disagrees with the independent Core state API", err)
 	}
 	fact := facts.Items[0]
 	var candidate appcenter.Candidate
@@ -91,7 +115,6 @@ func TestAppCenterAdmissionDatabaseFactsSubmitReplay(t *testing.T) {
 	other := actor
 	other.OrganizationID = uuid.NewString()
 	other.UserID = uuid.NewString()
-	reader.current = catalog.Observation{State: "not_installed", Reason: "not_found", ObservedAt: time.Now(), Images: []catalog.Image{}}
 	before = runtime.calls
 	facts, err = svc.AppCenterFacts(ctx, other, "foreign")
 	if err != nil {

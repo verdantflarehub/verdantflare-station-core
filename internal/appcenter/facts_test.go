@@ -67,6 +67,21 @@ func TestAppCenterInstallationAndObservationAreIndependent(t *testing.T) {
 	}
 }
 
+func TestAppCenterStateAuthorityPreservesInstallation(t *testing.T) {
+	for _, runtime := range []Service{
+		{State: "unknown", Quality: "unknown", ReasonCode: Text("NOT_SYNCED")},
+		{State: "unknown", Quality: "unknown", ReasonCode: Text("OBSERVATION_EXPIRED")},
+		{State: "absent", Quality: "known", ReasonCode: Text("RESOURCE_ABSENT")},
+	} {
+		// An old catalog observation must not override the Core state module.
+		w := workload("app", "manager", "installation")
+		f, err := BuildState(actor(), "request", fixtureTime, []catalog.SnapshotItem{w}, []Record{installed("app")}, nil, map[string]Service{"installation": runtime})
+		if err != nil || len(f.Items) != 1 || f.Items[0].Installation.State != "installed" || f.Items[0].Service.State != runtime.State || *f.Items[0].Service.ReasonCode != *runtime.ReasonCode {
+			t.Fatal("compatibility projection replaced authoritative state or lost installation", err)
+		}
+	}
+}
+
 func TestAppCenterDistinctWorkloadsAndConflicts(t *testing.T) {
 	a, b := workload("app", "a", "installation"), workload("app", "b", "other")
 	b.Registered = false

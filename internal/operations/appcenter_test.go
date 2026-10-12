@@ -42,9 +42,15 @@ func TestAppCenterDatabaseSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	guarded, err := catalog.Load(path, noAppCenterProbe{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	s := &Service{Pool: pool, Catalog: apps, StationID: station}
 	read := func(actor identity.IdentityContext) appcenter.Facts {
 		t.Helper()
+		s.Catalog = guarded
+		defer func() { s.Catalog = apps }()
 		facts, err := s.AppCenterFacts(ctx, actor, "snapshot-request")
 		if err != nil {
 			t.Fatal(err)
@@ -95,4 +101,15 @@ func TestAppCenterDatabaseSnapshot(t *testing.T) {
 	if _, err := s.AppCenterFacts(ctx, user, "after-failure"); !errors.Is(err, appcenter.ErrUnavailable) {
 		t.Fatal("database source failure turned into successful empty facts", err)
 	}
+}
+
+// Any regression to synchronous catalog observation fails before contacting a
+// network, including dynamic discovery hidden behind the Reader interface.
+type noAppCenterProbe struct{}
+
+func (noAppCenterProbe) Observe(context.Context, catalog.Entry) catalog.Observation {
+	panic("AppCenter called Kubernetes Observe")
+}
+func (noAppCenterProbe) Discover(context.Context) ([]catalog.Item, error) {
+	panic("AppCenter called Kubernetes Discover")
 }

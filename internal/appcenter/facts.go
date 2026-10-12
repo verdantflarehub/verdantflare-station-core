@@ -210,6 +210,16 @@ func publicCatalog(item catalog.Item) catalog.Item {
 // Build consumes a complete, scope-filtered database snapshot. It does not infer
 // an installation from an observed Deployment or collapse workload identities.
 func Build(user identity.IdentityContext, request string, now time.Time, catalogItems []catalog.SnapshotItem, installations []Record, operations []OperationRecord) (Facts, error) {
+	return buildFacts(user, request, now, catalogItems, installations, operations, nil)
+}
+
+// BuildState adapts the authoritative Core runtime projection without deriving
+// installation state from Kubernetes presence or recomputing readiness.
+func BuildState(user identity.IdentityContext, request string, now time.Time, catalogItems []catalog.SnapshotItem, installations []Record, operations []OperationRecord, states map[string]Service) (Facts, error) {
+	return buildFacts(user, request, now, catalogItems, installations, operations, states)
+}
+
+func buildFacts(user identity.IdentityContext, request string, now time.Time, catalogItems []catalog.SnapshotItem, installations []Record, operations []OperationRecord, states map[string]Service) (Facts, error) {
 	var empty Facts
 	if !canRead(user) {
 		return empty, identity.Denied
@@ -270,6 +280,12 @@ func Build(user identity.IdentityContext, request string, now time.Time, catalog
 		}
 		if matches > 1 {
 			item.Service = Service{Quality: "conflict", State: "unknown", ReasonCode: Text("MULTIPLE_WORKLOAD_BINDINGS")}
+		}
+		if states != nil {
+			item.Service = noService("NOT_SYNCED")
+			if state, ok := states[r.InstallationID]; ok {
+				item.Service = state
+			}
 		}
 		if installedApps[r.AppID] > 1 {
 			item.InstallationQuality = "conflict"

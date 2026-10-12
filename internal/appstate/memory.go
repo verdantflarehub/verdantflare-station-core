@@ -1,6 +1,9 @@
 package appstate
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"slices"
 	"strconv"
@@ -34,15 +37,17 @@ type Memory struct {
 }
 
 type memoryCollector struct {
-	config   Collector
-	active   *StreamSession
-	objects  map[string]memoryResource
-	lastFull time.Time
+	config                        Collector
+	active                        *StreamSession
+	objects                       map[string]memoryResource
+	lastFull                      time.Time
+	inventoryAt, inventoryExpires time.Time
 }
 
 type memoryResource struct {
 	ResourceObservation
 	received, expires, healthExpires time.Time
+	metadataDigest                   string
 }
 
 // Binding is supplied by Core's authenticated persistent installation read,
@@ -63,6 +68,7 @@ type memoryBinding struct {
 type MemoryView struct {
 	Runtime  Runtime
 	Revision string
+	Resource *ResourceObservation
 }
 
 // StreamSession is a capability tied to one live connection. Even if a handler
@@ -203,7 +209,14 @@ func (s *StreamSession) Objects(syncID string, objects []ResourceObservation) er
 }
 
 func sampled(o ResourceObservation, now time.Time) memoryResource {
-	return memoryResource{o, now, now.Add(observationTTL), now.Add(observationTTL)}
+	if o.Metadata != nil {
+		metadata := *o.Metadata
+		metadata.Images = slices.Clone(metadata.Images)
+		o.Metadata = &metadata
+	}
+	raw, _ := json.Marshal(o.Metadata)
+	sum := sha256.Sum256(raw)
+	return memoryResource{ResourceObservation: o, received: now, expires: now.Add(observationTTL), healthExpires: now.Add(observationTTL), metadataDigest: hex.EncodeToString(sum[:])}
 }
 
 func (s *StreamSession) End(syncID string, count int) error {
@@ -221,6 +234,7 @@ func (s *StreamSession) End(syncID string, count int) error {
 			}
 		}
 		c.objects, c.lastFull = s.staging, s.started
+		c.inventoryAt, c.inventoryExpires = s.started, s.started.Add(observationTTL)
 		s.staging, s.syncID, s.synced = nil, "", true
 		return nil
 	})
@@ -271,6 +285,7 @@ func (s *StreamSession) Heartbeat() error {
 			o.received, o.expires = now, now.Add(observationTTL)
 			c.objects[key] = o
 		}
+		c.inventoryAt, c.inventoryExpires = now, now.Add(observationTTL)
 		for _, b := range s.memory.bindings {
 			if b.collector == c.config.ID && !b.absentAt.IsZero() {
 				b.absentAt, b.absentExpires = now, now.Add(observationTTL)
@@ -286,6 +301,10 @@ func (s *StreamSession) Heartbeat() error {
 func (m *Memory) Views(bindings []Binding) (map[string]MemoryView, map[string]string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.viewsLocked(bindings)
+}
+
+func (m *Memory) viewsLocked(bindings []Binding) (map[string]MemoryView, map[string]string, error) {
 	add := map[string]Binding{}
 	wanted := map[string]bool{}
 	for _, b := range bindings {
@@ -324,7 +343,14 @@ func (m *Memory) Views(bindings []Binding) (map[string]MemoryView, map[string]st
 	views, revisions := map[string]MemoryView{}, map[string]string{}
 	for _, b := range bindings {
 		stored := m.bindings[b.InstallationID]
-		views[b.InstallationID] = MemoryView{cloneRuntime(stored.view), m.token(stored.revision)}
+		view := MemoryView{Runtime: cloneRuntime(stored.view), Revision: m.token(stored.revision)}
+		if c := m.collectors[stored.collector]; c != nil && stored.view.ReasonCode != "IDENTITY_CONFLICT" {
+			if o, ok := c.objects[stored.namespace+"/"+stored.name]; ok && o.UID == stored.uid && o.StationID == m.station && o.OrganizationID == b.OrganizationID && o.AppID == b.AppID && o.InstallationID == b.InstallationID && o.InstanceID == "" {
+				copy := sampled(o.ResourceObservation, o.received).ResourceObservation
+				view.Resource = &copy
+			}
+		}
+		views[b.InstallationID] = view
 		revisions[b.OrganizationID] = m.token(m.scopeRevision[b.OrganizationID])
 	}
 	return views, revisions, nil
@@ -389,6 +415,11 @@ func (m *Memory) projectAll(now time.Time) {
 			last = *v.LastKnownState
 		}
 		semantic := b.uid + "/" + v.State + "/" + v.Quality + "/" + v.ReasonCode + "/" + last
+		if c := m.collectors[b.collector]; c != nil {
+			if o, ok := c.objects[b.namespace+"/"+b.name]; ok && o.UID == b.uid && o.StationID == m.station && o.OrganizationID == b.OrganizationID && o.AppID == b.AppID && o.InstallationID == b.InstallationID && o.InstanceID == "" {
+				semantic += "/" + o.metadataDigest
+			}
+		}
 		if semantic != b.semantic {
 			b.semantic = semantic
 			b.revision++

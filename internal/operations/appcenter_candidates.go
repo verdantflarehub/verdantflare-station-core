@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -56,18 +57,26 @@ func (s *AppCenterAdmissionSource) projectCandidate(ctx context.Context, actor i
 	}
 	checkCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	result, err := s.Read(checkCtx, actor, Command{OrganizationID: actor.OrganizationID, StationID: actor.StationID, AppID: fact.AppID, AppVersion: version, Action: kind}, installation)
+	execution, err := s.resolve(checkCtx, actor, Command{OrganizationID: actor.OrganizationID, StationID: actor.StationID, AppID: fact.AppID, AppVersion: version, Action: kind}, installation)
+	if err == nil && s.Runtime == nil {
+		err = ErrAppCenterDispatch
+	}
 	reason := ""
 	if err != nil {
 		reason = appCenterAdmissionReason(err)
 		fact.Lifecycle.PolicyRevision = appcenter.Digest([]string{"studio.appcenter.admission-unavailable.v1", fact.AppID, version, reason})
 	} else {
-		fact.Lifecycle.PolicyRevision = result.Execution.PolicyRevision
+		fact.Lifecycle.PolicyRevision = execution.PolicyRevision
 		if kind == "start" {
-			if fact.Service.WorkloadUID == nil || *fact.Service.WorkloadUID != result.Execution.WorkloadUID {
+			// Evidence is already scoped by Core. Bind it to the exact local
+			// release without a Runtime call; submission still re-inspects live.
+			if fact.Service.WorkloadUID == nil || fact.Catalog == nil || fact.Catalog.Deployment.UID != *fact.Service.WorkloadUID ||
+				fact.Catalog.Deployment.Ownership["station.verdantflare.com/template-hash"] != strings.TrimPrefix(execution.TemplateDigest, "sha256:") {
 				reason = "APPCENTER_BINDING_CHANGED"
+			} else {
+				execution.WorkloadUID = *fact.Service.WorkloadUID
 			}
-		} else if fact.Catalog.Namespace != result.Observation.Namespace || fact.Catalog.WorkloadName != result.Observation.WorkloadName {
+		} else if fact.Service.WorkloadUID != nil {
 			reason = "APPCENTER_BINDING_CHANGED"
 		}
 	}
@@ -77,9 +86,9 @@ func (s *AppCenterAdmissionSource) projectCandidate(ctx context.Context, actor i
 			continue
 		}
 		candidate.Enabled, candidate.ReasonCode = reason == "", appcenter.Text(reason)
-		if err == nil {
-			candidate.ReleaseDigest = appcenter.Text(result.Execution.ReleaseDigest)
-			candidate.ExpectedWorkloadUID = appcenter.Text(result.Execution.WorkloadUID)
+		if err == nil && reason == "" {
+			candidate.ReleaseDigest = appcenter.Text(execution.ReleaseDigest)
+			candidate.ExpectedWorkloadUID = appcenter.Text(execution.WorkloadUID)
 		}
 	}
 }

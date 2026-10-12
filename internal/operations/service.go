@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/verdantflarehub/verdantflare-station-core/internal/appstate"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/catalog"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/identity"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/releasebinding"
@@ -47,6 +48,7 @@ type Operation struct {
 type Service struct {
 	Pool                     *pgxpool.Pool
 	Catalog                  *catalog.Service
+	AppStates                *appstate.Service
 	StationID                string
 	Releases                 *releasebinding.Source
 	TransitionReleases       *TransitionReleases

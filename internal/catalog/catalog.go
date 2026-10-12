@@ -65,6 +65,21 @@ type Service struct {
 	discoverer Discoverer
 }
 
+// Entries returns only trusted local metadata. It never calls discovery or a
+// workload reader and does not expose mutable slices from the loaded registry.
+func (s *Service) Entries() []Entry {
+	if s == nil {
+		return nil
+	}
+	entries := make([]Entry, len(s.entries))
+	for i, entry := range s.entries {
+		entry.Models = append([]string{}, entry.Models...)
+		entry.Images = append([]Image{}, entry.Images...)
+		entries[i] = entry
+	}
+	return entries
+}
+
 // RegisteredAppIDs reads the trusted in-process configuration only. It must
 // never invoke workload discovery while seeding the Core state read model.
 func (s *Service) RegisteredAppIDs() []string {
