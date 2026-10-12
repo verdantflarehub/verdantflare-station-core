@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -119,6 +120,13 @@ func run() int {
 	}
 	ops := &operations.Service{Pool: pool, Catalog: appCatalog, StationID: c.StationID}
 	appStates := &appstate.Service{Pool: pool, StationID: c.StationID}
+	appStateCollector, err := appstate.LoadCollectors(os.Getenv("STATION_APP_STATE_COLLECTOR_REGISTRY"), os.Getenv, appStates, []string{
+		c.BootstrapToken, os.Getenv("STATION_APP_TRANSITION_CONTROL_TOKEN"), os.Getenv("STATION_INSTANCE_CONTROL_TOKEN"), os.Getenv("STATION_BLENDER_CONTROL_TOKEN"), os.Getenv("STATION_APP_INSTALLATION_COMFYUI_TOKEN"), os.Getenv("STATION_NETWORK_TOKEN"), os.Getenv("STATION_RESOURCES_TOKEN"),
+	})
+	if err != nil {
+		logger.Error("app_state_collector_configuration_invalid")
+		return 1
+	}
 	if appCatalog != nil {
 		seedCtx, finish := context.WithTimeout(ctx, 10*time.Second)
 		err := appStates.SyncCatalog(seedCtx, appCatalog.RegisteredAppIDs())
@@ -202,7 +210,8 @@ func run() int {
 		logger.Error("invalid_installation_access_configuration")
 		return 1
 	}
-	server := &http.Server{Addr: c.Listen, Handler: &gateway.Server{AppStates: appStates, Identity: service, BootstrapToken: c.BootstrapToken, Logger: logger, Catalog: appCatalog, Operations: ops, Telemetry: telemetryService, BlenderControl: blenderControl, Egress: egressService, AppAccess: appAccess, InstallationAccess: installationAccess}, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 65 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
+	server := &http.Server{Addr: c.Listen, Handler: &gateway.Server{AppStates: appStates, AppStateCollector: appStateCollector, Identity: service, BootstrapToken: c.BootstrapToken, Logger: logger, Catalog: appCatalog, Operations: ops, Telemetry: telemetryService, BlenderControl: blenderControl, Egress: egressService, AppAccess: appAccess, InstallationAccess: installationAccess}, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 65 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
+	server.BaseContext = func(net.Listener) context.Context { return ctx }
 	done := make(chan error, 1)
 	go func() { done <- server.ListenAndServe() }()
 	logger.Info("station_core_starting", "version", gateway.Version, "station_id", c.StationID, "listen", c.Listen, "contracts_major", migrations.ContractsMajor, "migration_version", migrations.Version, "session_ttl", c.SessionTTL.String(), "login_failure_limit", 5, "account_lock_duration", "15m", "log_level", c.LogLevel)

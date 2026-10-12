@@ -3,10 +3,10 @@ package appstate
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"regexp"
 	"slices"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -16,8 +16,10 @@ import (
 )
 
 type Service struct {
-	Pool      *pgxpool.Pool
-	StationID string
+	Observations *Memory
+	memoryOnce   sync.Once
+	Pool         *pgxpool.Pool
+	StationID    string
 }
 
 func rollback(tx pgx.Tx) {
@@ -67,11 +69,9 @@ func (s *Service) Snapshot(ctx context.Context, user identity.IdentityContext, i
  )
  SELECT v.app_id,v.installation_id::text,COALESCE(m.revision,0),v.revision,v.app_version,v.state,
  CASE WHEN last_op.user_id=$3 AND last_op.organization_id=$2 THEN v.last_operation_id::text ELSE NULL END,
- o.state,o.reason_code,o.received_at,o.expires_at,COALESCE(o.expired,false),
  op.operation_id,op.protocol,op.status,op.phase
  FROM visible v
  LEFT JOIN station.app_state_items m ON m.station_id=$1 AND m.organization_id=$2 AND m.app_id=v.app_id
- LEFT JOIN station.app_state_observations o ON o.installation_id=v.installation_id
  LEFT JOIN station.app_operations last_op ON last_op.operation_id=v.last_operation_id
  LEFT JOIN LATERAL (
   SELECT q.operation_id,q.protocol,q.status,q.phase FROM (
@@ -93,10 +93,8 @@ func (s *Service) Snapshot(ctx context.Context, user identity.IdentityContext, i
 		var item Item
 		var itemRev int64
 		var installRev *int64
-		var version, state, lastOperation, observedState, reason, opID, protocol, status, phase *string
-		var received, expires *time.Time
-		var expired bool
-		if err = rows.Scan(&item.AppID, &item.InstallationID, &itemRev, &installRev, &version, &state, &lastOperation, &observedState, &reason, &received, &expires, &expired, &opID, &protocol, &status, &phase); err != nil {
+		var version, state, lastOperation, opID, protocol, status, phase *string
+		if err = rows.Scan(&item.AppID, &item.InstallationID, &itemRev, &installRev, &version, &state, &lastOperation, &opID, &protocol, &status, &phase); err != nil {
 			rows.Close()
 			return empty, ErrUnavailable
 		}
@@ -108,7 +106,6 @@ func (s *Service) Snapshot(ctx context.Context, user identity.IdentityContext, i
 			}
 			item.Installation = &Installation{*installRev, *version, *state, lastOperation}
 		}
-		item.Runtime = RuntimeView(out.GeneratedAt, observedState, reason, received, expires, expired)
 		if opID != nil {
 			if protocol == nil || status == nil || phase == nil {
 				rows.Close()
@@ -128,6 +125,32 @@ func (s *Service) Snapshot(ctx context.Context, user identity.IdentityContext, i
 	}
 	if installationID != "" && len(out.Items) == 0 {
 		return empty, ErrNotFound
+	}
+	bindings, err := s.readBindings(ctx, tx, installationID)
+	if err != nil {
+		return empty, err
+	}
+	memory := s.memory()
+	views, scopes, err := memory.Views(bindings)
+	if err != nil {
+		return empty, err
+	}
+	out.GeneratedAt = time.Now().UTC()
+	scopeToken := scopes[user.OrganizationID]
+	if scopeToken == "" {
+		scopeToken = memory.token(0)
+	}
+	out.Revision += ":" + scopeToken
+	for index := range out.Items {
+		item := &out.Items[index]
+		view := MemoryView{Runtime: Runtime{State: "unknown", Quality: "unknown", ReasonCode: "NOT_SYNCED"}, Revision: memory.token(0)}
+		if item.InstallationID != nil {
+			if known, ok := views[*item.InstallationID]; ok {
+				view = known
+			}
+		}
+		item.Runtime = view.Runtime
+		item.StateRevision += ":" + view.Revision
 	}
 	encoded, err := json.Marshal(out)
 	if err != nil {
@@ -220,68 +243,47 @@ func (s *Service) SyncCatalog(ctx context.Context, apps []string) error {
 	return tx.Commit(ctx)
 }
 
-// Expire records a quality change even when Kubernetes emits no new event.
-// Reads also enforce the deadline so a delayed scanner cannot report ready.
-func (s *Service) Expire(ctx context.Context) error {
-	if s == nil || s.Pool == nil {
-		return ErrUnavailable
-	}
-	_, err := s.Pool.Exec(ctx, `UPDATE station.app_state_observations o SET expired=true FROM station.app_installations i WHERE i.installation_id=o.installation_id AND i.station_id=$1 AND NOT o.expired AND o.expires_at<=clock_timestamp()`, s.StationID)
-	if err != nil {
-		return ErrUnavailable
-	}
-	return nil
+func (s *Service) memory() *Memory {
+	s.memoryOnce.Do(func() {
+		if s.Observations == nil {
+			s.Observations, _ = NewMemory(s.StationID, nil)
+		}
+	})
+	return s.Observations
 }
 
-type Notification struct {
-	Scope     Scope
-	Revision  string
-	ChangedAt time.Time
-}
-
-// Pending is a coalesced durable outbox, not an event history.
-func (s *Service) Pending(ctx context.Context, limit int) ([]Notification, error) {
-	if s == nil || s.Pool == nil {
-		return nil, ErrUnavailable
-	}
-	if limit < 1 || limit > 1000 {
-		return nil, identity.Invalid
-	}
-	rows, err := s.Pool.Query(ctx, `SELECT organization_id::text,revision::text,changed_at FROM station.app_state_scopes WHERE station_id=$1 AND published_revision<revision ORDER BY changed_at,organization_id LIMIT $2`, s.StationID, limit)
+// readBindings uses the same transaction as installation/operation facts.
+// It supplies trusted identities to the reconstructible observation cache.
+func (s *Service) readBindings(ctx context.Context, tx pgx.Tx, extra string) ([]Binding, error) {
+	rows, err := tx.Query(ctx, `SELECT installation_id::text,organization_id::text,app_id FROM station.app_installations WHERE station_id=$1 AND (state<>'removed' OR installation_id::text=$2) ORDER BY installation_id LIMIT 1001`, s.StationID, extra)
 	if err != nil {
 		return nil, ErrUnavailable
 	}
 	defer rows.Close()
-	out := []Notification{}
+	bindings := []Binding{}
 	for rows.Next() {
-		v := Notification{Scope: Scope{StationID: s.StationID}}
-		if err = rows.Scan(&v.Scope.OrganizationID, &v.Revision, &v.ChangedAt); err != nil {
+		var b Binding
+		if rows.Scan(&b.InstallationID, &b.OrganizationID, &b.AppID) != nil {
 			return nil, ErrUnavailable
 		}
-		out = append(out, v)
+		bindings = append(bindings, b)
 	}
 	if rows.Err() != nil {
 		return nil, ErrUnavailable
 	}
-	return out, nil
+	if len(bindings) > maxBindings {
+		return nil, ErrLimit
+	}
+	return bindings, nil
 }
 
-// Acknowledge cannot clear changes committed after the published revision.
-func (s *Service) Acknowledge(ctx context.Context, n Notification) error {
-	if s == nil || s.Pool == nil {
+func (s *Service) Expire(ctx context.Context) error {
+	if s == nil || !validID(s.StationID) {
 		return ErrUnavailable
 	}
-	v, err := strconv.ParseInt(n.Revision, 10, 64)
-	if err != nil || v <= 0 || strconv.FormatInt(v, 10) != n.Revision || n.Scope.StationID != s.StationID || !validID(n.Scope.OrganizationID) {
-		return identity.Invalid
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	var accepted bool
-	err = s.Pool.QueryRow(ctx, `UPDATE station.app_state_scopes SET published_revision=GREATEST(published_revision,$3) WHERE station_id=$1 AND organization_id=$2 AND revision>=$3 RETURNING true`, s.StationID, n.Scope.OrganizationID, v).Scan(&accepted)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return identity.Conflict
-	}
-	if err != nil {
-		return ErrUnavailable
-	}
+	s.memory().Expire()
 	return nil
 }

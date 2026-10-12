@@ -1,9 +1,8 @@
--- Core owns the durable application read model. etcd receives only revision hints.
+-- Core persists installation/operation revisions only. Runtime observations live in memory.
 CREATE TABLE station.app_state_scopes (
  station_id uuid NOT NULL REFERENCES station.configuration(station_id),
  organization_id uuid NOT NULL REFERENCES station.organizations(organization_id),
  revision bigint NOT NULL DEFAULT 0 CHECK (revision >= 0),
- published_revision bigint NOT NULL DEFAULT 0 CHECK (published_revision BETWEEN 0 AND revision),
  changed_at timestamptz NOT NULL DEFAULT now(),
  PRIMARY KEY(station_id,organization_id)
 );
@@ -20,19 +19,6 @@ CREATE TABLE station.app_state_catalog (
  app_id text NOT NULL CHECK (app_id ~ '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$' AND length(app_id)<=63),
  PRIMARY KEY(station_id,app_id)
 );
-CREATE TABLE station.app_state_observations (
- installation_id uuid PRIMARY KEY REFERENCES station.app_installations(installation_id),
- workload_uid text,
- state text NOT NULL CHECK (state IN ('unknown','absent','starting','ready','degraded','stopping','stopped')),
- reason_code text NOT NULL CHECK (reason_code ~ '^[A-Z][A-Z0-9_]{0,63}$'),
- received_at timestamptz NOT NULL,
- expires_at timestamptz NOT NULL CHECK (expires_at > received_at),
- expired boolean NOT NULL DEFAULT false,
- CHECK (workload_uid IS NULL OR length(workload_uid) BETWEEN 1 AND 128),
- CHECK (state NOT IN ('starting','ready','degraded','stopping','stopped') OR workload_uid IS NOT NULL)
-);
-CREATE INDEX app_state_observations_expiry ON station.app_state_observations(expires_at) WHERE NOT expired;
-
 CREATE FUNCTION station.mark_app_state(s uuid, o uuid, a text) RETURNS void LANGUAGE plpgsql AS $$
 DECLARE v bigint;
 BEGIN
@@ -73,27 +59,6 @@ CREATE TRIGGER app_state_operation_changed AFTER INSERT OR UPDATE OR DELETE ON s
  FOR EACH ROW EXECUTE FUNCTION station.app_state_business_changed();
 CREATE TRIGGER app_state_transition_changed AFTER INSERT OR UPDATE OR DELETE ON station.app_installation_transitions
  FOR EACH ROW EXECUTE FUNCTION station.app_state_business_changed();
-
-CREATE FUNCTION station.app_state_observation_changed() RETURNS trigger LANGUAGE plpgsql AS $$
-DECLARE i station.app_installations%ROWTYPE;
-BEGIN
- IF TG_OP='DELETE' THEN
-  SELECT * INTO STRICT i FROM station.app_installations WHERE installation_id=OLD.installation_id;
-  PERFORM station.mark_app_state(i.station_id,i.organization_id,i.app_id);
-  RETURN OLD;
- END IF;
- IF TG_OP='UPDATE' THEN
-  IF NEW.installation_id<>OLD.installation_id THEN RAISE EXCEPTION 'immutable observation identity'; END IF;
-  IF (NEW.workload_uid,NEW.state,NEW.reason_code,NEW.expired) IS NOT DISTINCT FROM
-     (OLD.workload_uid,OLD.state,OLD.reason_code,OLD.expired)
-     AND NOT (OLD.expires_at<=clock_timestamp() AND NEW.expires_at>clock_timestamp()) THEN RETURN NEW; END IF;
- END IF;
- SELECT * INTO STRICT i FROM station.app_installations WHERE installation_id=NEW.installation_id;
- PERFORM station.mark_app_state(i.station_id,i.organization_id,i.app_id);
- RETURN NEW;
-END $$;
-CREATE TRIGGER app_state_observation_changed AFTER INSERT OR UPDATE OR DELETE ON station.app_state_observations
- FOR EACH ROW EXECUTE FUNCTION station.app_state_observation_changed();
 
 -- Backfill revisions, never invented observations or installation facts.
 DO $$

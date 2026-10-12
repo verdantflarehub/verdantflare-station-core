@@ -40,8 +40,9 @@
     },
     "revision": {
       "type": "string",
-      "pattern": "^(0|[1-9][0-9]*)$",
-      "maxLength": 19
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[!-~]+$"
     },
     "time": {
       "type": "string",

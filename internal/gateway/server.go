@@ -54,6 +54,7 @@ type StationHealth struct {
 }
 type Server struct {
 	AppStates          *appstate.Service
+	AppStateCollector  *appstate.CollectorHandler
 	Identity           *identity.Service
 	BootstrapToken     string
 	Logger             *slog.Logger
@@ -77,6 +78,8 @@ func (w *responseWriter) WriteHeader(status int) {
 		w.ResponseWriter.WriteHeader(status)
 	}
 }
+func (w *responseWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
 func (w *responseWriter) Write(p []byte) (int, error) {
 	if w.status == 0 {
 		w.WriteHeader(200)
@@ -230,6 +233,7 @@ func (s *Server) ServeHTTP(original http.ResponseWriter, r *http.Request) {
 		return
 	}
 	routes := map[string]string{
+		"/internal/app-states/v1/stream":           "POST",
 		"/app-states/v1":                           "GET",
 		"/appcenter/v1/facts":                      "GET",
 		"/appcenter/v1/commands":                   "POST",
@@ -266,6 +270,10 @@ func (s *Server) ServeHTTP(original http.ResponseWriter, r *http.Request) {
 	if r.Method != method {
 		w.Header().Set("Allow", method)
 		reply(w, 405, ErrorResponse{"INVALID_ARGUMENT", "Method not allowed", requestID})
+		return
+	}
+	if route == "/internal/app-states/v1/stream" {
+		s.AppStateCollector.ServeHTTP(w, r)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)

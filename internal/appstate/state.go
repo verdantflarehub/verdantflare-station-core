@@ -54,7 +54,7 @@ type Operation struct {
 }
 
 // RuntimeView never confuses missing/expired evidence with an absent workload.
-// now is the Core database clock, not a client or collector timestamp.
+// now is the Core service clock, not a client or collector timestamp.
 func RuntimeView(now time.Time, state, reason *string, received, expires *time.Time, expired bool) Runtime {
 	out := Runtime{State: "unknown", Quality: "unknown", ReasonCode: "NOT_OBSERVED", ObservedAt: received, ExpiresAt: expires}
 	if state == nil || reason == nil || received == nil || expires == nil {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -58,10 +57,10 @@ func query(t *testing.T, s *Service, sql string, args ...any) {
 		t.Fatal(err)
 	}
 }
-func revision(t *testing.T, v string) int64 {
+func persistentRevision(t *testing.T, s *Service, org string) int64 {
 	t.Helper()
-	n, err := strconv.ParseInt(v, 10, 64)
-	if err != nil {
+	var n int64
+	if err := s.Pool.QueryRow(t.Context(), `SELECT revision FROM station.app_state_scopes WHERE station_id=$1 AND organization_id=$2`, s.StationID, org).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	return n
@@ -76,8 +75,8 @@ func TestAppStateDatabaseSnapshotAndIsolation(t *testing.T) {
 	if len(v.Items) != 2 || v.Items[0].Installation.State != "installed" || v.Items[0].Runtime.State != "unknown" || v.Items[1].Installation != nil {
 		t.Fatal("installation and observation conflated", v)
 	}
-	if got := snapshot(t, &Service{Pool: s.Pool, StationID: s.StationID}, u, id); got.Revision != v.Revision || len(got.Items) != 1 {
-		t.Fatal("restart lost snapshot")
+	if got := snapshot(t, &Service{Pool: s.Pool, StationID: s.StationID}, u, id); got.Revision == v.Revision || len(got.Items) != 1 {
+		t.Fatal("restart failed to change boot token or lost installation")
 	}
 	foreign := u
 	foreign.OrganizationID = uuid.Must(uuid.NewV7()).String()
@@ -110,75 +109,71 @@ func TestAppStateDatabaseSnapshotAndIsolation(t *testing.T) {
 	}
 }
 
-func TestAppStateDatabaseObservationExpiryAndOutbox(t *testing.T) {
+func TestAppStateDatabaseMemoryProjectionAndRestart(t *testing.T) {
 	s, u, id := fixture(t)
-	query(t, s, `INSERT INTO station.app_state_observations(installation_id,workload_uid,state,reason_code,received_at,expires_at) VALUES($1,'resource-original','ready','READY',clock_timestamp(),clock_timestamp()+interval '30 seconds')`, id)
+	memory, err := NewMemory(s.StationID, []Collector{{ID: "runtime", Namespaces: []string{"apps"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	memory.now = func() time.Time { return now }
+	s.Observations = memory
+	session, err := memory.Open("runtime")
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := ResourceObservation{Namespace: "apps", Name: "fixture-app", UID: uuid.NewString(), ResourceVersion: "opaque", StationID: u.StationID, OrganizationID: u.OrganizationID, InstallationID: id, AppID: "fixture-app", Generation: 1, ObservedGeneration: 1, Desired: 1, Replicas: 1, Ready: 1, Updated: 1, Available: 1, Health: "not_checked"}
+	memoryFull(t, session, o)
 	before := snapshot(t, s, u, id)
 	if before.Items[0].Runtime.State != "ready" {
-		t.Fatal("fresh observation missing")
+		t.Fatal("memory not projected")
 	}
-	query(t, s, `UPDATE station.app_state_observations SET received_at=clock_timestamp(),expires_at=clock_timestamp()+interval '30 seconds' WHERE installation_id=$1`, id)
+	persistent := persistentRevision(t, s, u.OrganizationID)
+	now = now.Add(20 * time.Second)
+	if err = session.Heartbeat(); err != nil {
+		t.Fatal(err)
+	}
 	if got := snapshot(t, s, u, id); got.Revision != before.Revision {
-		t.Fatal("heartbeat changed semantic revision")
+		t.Fatal("heartbeat advanced business revision")
 	}
-	pending, err := s.Pending(t.Context(), 10)
-	if err != nil || len(pending) != 1 {
-		t.Fatal("missing durable notification", err)
-	}
-	// Force deadline passage without running the expiry worker; reads must
-	// already be unknown, while the original installation remains installed.
-	query(t, s, `UPDATE station.app_state_observations SET received_at=clock_timestamp()-interval '60 seconds',expires_at=clock_timestamp()-interval '1 second' WHERE installation_id=$1`, id)
+	now = now.Add(31 * time.Second)
 	got := snapshot(t, s, u, id)
-	if got.Items[0].Runtime.State != "unknown" || got.Items[0].Runtime.ReasonCode != "OBSERVATION_EXPIRED" || got.Items[0].Installation.State != "installed" {
-		t.Fatal("expired evidence erased installation or stayed ready")
+	if got.Items[0].Runtime.State != "unknown" || got.Items[0].Runtime.ReasonCode != "OBSERVATION_EXPIRED" || got.Items[0].Installation.State != "installed" || got.Revision == before.Revision {
+		t.Fatal("expiry did not preserve installation or change token", got)
 	}
 	if err = s.Expire(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	after := snapshot(t, s, u, id)
-	if revision(t, after.Revision) <= revision(t, before.Revision) {
-		t.Fatal("expiry not notified")
+	if snapshot(t, s, u, id).Revision != got.Revision {
+		t.Fatal("expiry advanced twice")
 	}
-	if err = s.Acknowledge(t.Context(), pending[0]); err != nil {
+	session, err = memory.Open("runtime")
+	if err != nil {
 		t.Fatal(err)
 	}
-	remaining, err := s.Pending(t.Context(), 10)
-	if err != nil || len(remaining) != 1 || remaining[0].Revision != after.Revision {
-		t.Fatal("stale acknowledgment lost a later change", err)
+	memoryFull(t, session, o)
+	snapshot(t, s, u, id)
+	memoryFull(t, session)
+	if got := snapshot(t, s, u, id); got.Items[0].Runtime.State != "absent" || got.Items[0].Installation.State != "installed" {
+		t.Fatal("resource disappearance erased installation")
 	}
-	if err = s.Expire(t.Context()); err != nil {
-		t.Fatal(err)
+	restarted := &Service{Pool: s.Pool, StationID: s.StationID}
+	got = snapshot(t, restarted, u, id)
+	if got.Items[0].Runtime.State != "unknown" || got.Items[0].Runtime.ReasonCode != "NOT_SYNCED" || got.Items[0].Runtime.LastKnownState != nil || got.Items[0].Installation.State != "installed" || got.Revision == before.Revision {
+		t.Fatal("restart did not clear only observations")
 	}
-	if snapshot(t, s, u, id).Revision != after.Revision {
-		t.Fatal("expiry replay created another change")
+	if persistentRevision(t, s, u.OrganizationID) != persistent {
+		t.Fatal("observations changed persistent revision")
 	}
-	if err = s.Acknowledge(t.Context(), remaining[0]); err != nil {
-		t.Fatal(err)
-	}
-	if remaining, err = s.Pending(t.Context(), 10); err != nil || len(remaining) != 0 {
-		t.Fatal("acknowledged notification pending", err)
-	}
-	query(t, s, `UPDATE station.app_state_observations SET workload_uid=NULL,state='absent',reason_code='RESOURCE_ABSENT',received_at=clock_timestamp(),expires_at=clock_timestamp()+interval '30 seconds',expired=false WHERE installation_id=$1`, id)
-	got = snapshot(t, s, u, id)
-	if got.Items[0].Runtime.State != "absent" || got.Items[0].Installation.State != "installed" {
-		t.Fatal("resource missing was treated as uninstall")
-	}
-	query(t, s, `UPDATE station.app_state_observations SET received_at=clock_timestamp()-interval '60 seconds',expires_at=clock_timestamp()-interval '1 second' WHERE installation_id=$1`, id)
-	stale := snapshot(t, s, u, id)
-	query(t, s, `UPDATE station.app_state_observations SET received_at=clock_timestamp(),expires_at=clock_timestamp()+interval '30 seconds' WHERE installation_id=$1`, id)
-	refreshed := snapshot(t, s, u, id)
-	if revision(t, refreshed.Revision) <= revision(t, stale.Revision) {
-		t.Fatal("refresh after deadline failed to notify before scanner ran")
-	}
-	query(t, s, `DELETE FROM station.app_state_observations WHERE installation_id=$1`, id)
-	cleared := snapshot(t, s, u, id)
-	if cleared.Items[0].Runtime.ReasonCode != "NOT_OBSERVED" || revision(t, cleared.Revision) <= revision(t, refreshed.Revision) {
-		t.Fatal("discarded evidence failed to notify")
+	var forbidden bool
+	if err = s.Pool.QueryRow(t.Context(), `SELECT to_regclass('station.app_state_observations') IS NOT NULL OR to_regclass('station.app_state_collectors') IS NOT NULL OR EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='station' AND table_name='app_state_scopes' AND column_name='published_revision')`).Scan(&forbidden); err != nil || forbidden {
+		t.Fatal("transient state schema remains", err)
 	}
 }
 
 func TestAppStateDatabaseAtomicRevisionAndConcurrentChanges(t *testing.T) {
 	s, u, id := fixture(t)
+	beforePersistent := persistentRevision(t, s, u.OrganizationID)
 	before := snapshot(t, s, u, id)
 	tx, err := s.Pool.Begin(t.Context())
 	if err != nil {
@@ -212,21 +207,14 @@ func TestAppStateDatabaseAtomicRevisionAndConcurrentChanges(t *testing.T) {
 		}
 	}
 	after := snapshot(t, s, u, id)
-	if revision(t, after.Revision)-revision(t, before.Revision) != count || after.Items[0].Installation.Revision-before.Items[0].Installation.Revision != count {
+	if persistentRevision(t, s, u.OrganizationID)-beforePersistent != count || after.Revision == before.Revision || after.Items[0].Installation.Revision-before.Items[0].Installation.Revision != count {
 		t.Fatal("concurrent business changes lost", before, after)
 	}
 	query(t, s, `UPDATE station.app_installations SET updated_at=clock_timestamp() WHERE installation_id=$1`, id)
 	if snapshot(t, s, u, id).Revision != after.Revision {
 		t.Fatal("poll timestamp caused a business change")
 	}
-	pending, err := s.Pending(t.Context(), 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	pending[0].Revision = strconv.FormatInt(revision(t, after.Revision)+1, 10)
-	if err = s.Acknowledge(t.Context(), pending[0]); !errors.Is(err, identity.Conflict) {
-		t.Fatal("uncommitted future acknowledged", err)
-	}
+
 }
 
 func TestAppStateDatabaseOperationAndTransitionProjection(t *testing.T) {
