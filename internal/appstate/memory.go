@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"slices"
 	"strconv"
 	"sync"
@@ -203,7 +204,7 @@ func (s *StreamSession) Objects(syncID string, objects []ResourceObservation) er
 			seen[key] = true
 		}
 		for _, o := range objects {
-			s.staging[o.Namespace+"/"+o.Name] = sampled(o, now)
+			s.staging[o.Namespace+"/"+o.Name] = s.sample(o, now)
 		}
 		return nil
 	})
@@ -218,6 +219,38 @@ func sampled(o ResourceObservation, now time.Time) memoryResource {
 	raw, _ := json.Marshal(o.Metadata)
 	sum := sha256.Sum256(raw)
 	return memoryResource{ResourceObservation: o, received: now, expires: now.Add(observationTTL), healthExpires: now.Add(observationTTL), metadataDigest: hex.EncodeToString(sum[:])}
+}
+
+// A relist is not a new HTTP probe. Preserve a matching sample's original
+// deadline, and never carry health across a connection or changed facts.
+func (s *StreamSession) sample(o ResourceObservation, now time.Time) memoryResource {
+	next := sampled(o, now)
+	if s.synced && o.Health == "not_checked" {
+		old, exists := s.collector.objects[o.Namespace+"/"+o.Name]
+		previous := old.ResourceObservation
+		previous.Health = "not_checked"
+		if exists && reflect.DeepEqual(previous, o) {
+			next.Health, next.healthExpires = old.Health, old.healthExpires
+		}
+	}
+	return next
+}
+
+func (s *StreamSession) Health(f Health) error {
+	return s.apply(func(now time.Time) error {
+		if !s.synced || s.staging != nil || !validStreamLocation(f.Namespace, f.Name, f.UID, s.collector.config) ||
+			len(f.ResourceVersion) == 0 || len(f.ResourceVersion) > 256 || (f.Health != "ready" && f.Health != "failed") {
+			return ErrStreamFrame
+		}
+		key := f.Namespace + "/" + f.Name
+		o, exists := s.collector.objects[key]
+		if !exists || o.Deleted || o.UID != f.UID || o.ResourceVersion != f.ResourceVersion || o.InstanceID != "" || o.Terminating || o.Desired == 0 {
+			return nil
+		}
+		o.Health, o.healthExpires = f.Health, now.Add(observationTTL)
+		s.collector.objects[key] = o
+		return nil
+	})
 }
 
 func (s *StreamSession) End(syncID string, count int) error {
@@ -250,7 +283,7 @@ func (s *StreamSession) Upsert(o ResourceObservation) error {
 		if _, exists := s.collector.objects[key]; !exists && len(s.collector.objects) >= maxInventory {
 			return ErrLimit
 		}
-		s.collector.objects[key] = sampled(o, now)
+		s.collector.objects[key] = s.sample(o, now)
 		return nil
 	})
 }

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -26,7 +27,17 @@ func TestCollectorBridge(t *testing.T) {
 		t.Fatal("bridge credential generation failed")
 	}
 	token := hex.EncodeToString(secretBytes)
-	h, err := LoadCollectors(collectorConfig(t), func(string) string { return token }, s, nil)
+	registry := collectorConfig(t)
+	if os.Getenv("STATION_APP_STATE_BRIDGE_HEALTH") == "1" {
+		raw, err := os.ReadFile(registry)
+		if err != nil {
+			t.Fatal("collector config unavailable")
+		}
+		if err = os.WriteFile(registry, []byte(strings.Replace(string(raw), `"healthRequiredApps":[]`, `"healthRequiredApps":["fixture-app"]`, 1)), 0600); err != nil {
+			t.Fatal("collector config unavailable")
+		}
+	}
+	h, err := LoadCollectors(registry, func(string) string { return token }, s, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

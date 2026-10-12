@@ -229,6 +229,12 @@ func (s *StreamSession) Receive(raw []byte) error {
 		if err == nil {
 			return s.Heartbeat()
 		}
+	case "health":
+		var f Health
+		err = decode(&f)
+		if err == nil {
+			return s.Health(f)
+		}
 	default:
 		err = strictjson.ErrInvalid
 	}
