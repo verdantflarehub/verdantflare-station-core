@@ -4,6 +4,7 @@ import (
 	"context"
 	"slices"
 	"sort"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/catalog"
@@ -50,22 +51,10 @@ func (m *Memory) catalogSnapshot(organization string, entries []catalog.Entry, b
 	for _, e := range entries {
 		e.Models, e.Images = slices.Clone(e.Models), slices.Clone(e.Images)
 		key := e.Namespace + "/" + e.WorkloadName
-		obs := catalog.Observation{State: "unknown", Reason: "NOT_SYNCED", Images: []catalog.Image{}}
+		obs := m.catalogPosition(e, now)
 		if v, ok := locations[key]; ok && v.Resource.AppID == e.AppID {
 			obs = catalogObservation(v)
 			used[key] = true
-		} else {
-			for _, c := range m.collectors {
-				if !slices.Contains(c.config.Namespaces, e.Namespace) {
-					continue
-				}
-				if _, occupied := c.objects[key]; occupied {
-					// No organization identity is inferred from a catalog name.
-					obs.Reason = "WORKLOAD_BINDING_MISSING"
-				} else if !c.inventoryAt.IsZero() && now.Before(c.inventoryExpires) {
-					obs.State, obs.Reason, obs.ObservedAt = "not_installed", "RESOURCE_ABSENT", c.inventoryAt
-				}
-			}
 		}
 		modelStatus := "unknown"
 		if len(e.Models) == 0 {
@@ -91,6 +80,23 @@ func (m *Memory) catalogSnapshot(organization string, entries []catalog.Entry, b
 		return a.AppID+"/"+a.Namespace+"/"+a.WorkloadName < b.AppID+"/"+b.Namespace+"/"+b.WorkloadName
 	})
 	return items, views, nil
+}
+
+// catalogPosition requires m.mu. A trusted position grants no ownership;
+// foreign/unbound/instance occupants expose only the existing unknown result.
+func (m *Memory) catalogPosition(e catalog.Entry, now time.Time) catalog.Observation {
+	obs := catalog.Observation{State: "unknown", Reason: "NOT_SYNCED", Images: []catalog.Image{}}
+	for _, c := range m.collectors {
+		if !slices.Contains(c.config.Namespaces, e.Namespace) {
+			continue
+		}
+		if _, occupied := c.objects[e.Namespace+"/"+e.WorkloadName]; occupied {
+			obs.Reason = "WORKLOAD_BINDING_MISSING"
+		} else if !c.inventoryAt.IsZero() && now.Before(c.inventoryExpires) {
+			obs.State, obs.Reason, obs.ObservedAt = "not_installed", "RESOURCE_ABSENT", c.inventoryAt
+		}
+	}
+	return obs
 }
 
 func catalogObservation(v MemoryView) catalog.Observation {

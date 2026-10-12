@@ -119,7 +119,7 @@ func run() int {
 		k8sReader, _ = catalog.NewKubernetes(os.Getenv("STATION_KUBECONFIG"))
 	}
 	ops := &operations.Service{Pool: pool, Catalog: appCatalog, StationID: c.StationID}
-	appStates := &appstate.Service{Pool: pool, StationID: c.StationID}
+	appStates := &appstate.Service{Pool: pool, StationID: c.StationID, Catalog: appCatalog}
 	ops.AppStates = appStates
 	appStateCollector, err := appstate.LoadCollectors(os.Getenv("STATION_APP_STATE_COLLECTOR_REGISTRY"), os.Getenv, appStates, []string{
 		c.BootstrapToken, os.Getenv("STATION_APP_TRANSITION_CONTROL_TOKEN"), os.Getenv("STATION_INSTANCE_CONTROL_TOKEN"), os.Getenv("STATION_BLENDER_CONTROL_TOKEN"), os.Getenv("STATION_APP_INSTALLATION_COMFYUI_TOKEN"), os.Getenv("STATION_NETWORK_TOKEN"), os.Getenv("STATION_RESOURCES_TOKEN"),

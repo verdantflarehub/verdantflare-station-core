@@ -2,6 +2,8 @@ package appstate
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"log/slog"
 	"net/url"
@@ -11,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/verdantflarehub/verdantflare-station-core/internal/catalog"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
@@ -54,8 +57,13 @@ func (s *Service) NotificationRevisions(ctx context.Context) (map[string]string,
 	if err != nil {
 		return nil, err
 	}
+	blockers, err := notificationBlockers(ctx, tx, s.StationID)
+	if err != nil {
+		return nil, err
+	}
+	entries := s.Catalog.Entries()
 	memory := s.memory()
-	_, scopes, err := memory.Views(bindings)
+	scopes, positions, err := memory.notificationViews(bindings, entries)
 	if err != nil {
 		return nil, err
 	}
@@ -64,12 +72,99 @@ func (s *Service) NotificationRevisions(ctx context.Context) (map[string]string,
 		if volatile == "" {
 			volatile = memory.token(0)
 		}
-		revisions[organization] = revision + ":" + volatile
+		visible := map[string]bool{}
+		for _, entry := range entries {
+			visible[entry.AppID] = true
+		}
+		for _, binding := range bindings {
+			if binding.OrganizationID == organization {
+				visible[binding.AppID] = true
+			}
+		}
+		foreign := map[string]bool{}
+		for _, binding := range bindings {
+			if binding.OrganizationID != organization && visible[binding.AppID] {
+				foreign[binding.AppID] = true
+			}
+		}
+		availability := make([]notificationAvailability, 0, len(visible))
+		for app := range visible {
+			availability = append(availability, notificationAvailability{app, foreign[app], blockers[app]})
+		}
+		sort.Slice(availability, func(i, j int) bool { return availability[i].AppID < availability[j].AppID })
+		revisions[organization] = notificationDigest(struct {
+			State        string
+			Positions    []notificationPosition
+			Availability []notificationAvailability
+		}{revision + ":" + volatile, positions, availability})
 	}
 	if tx.Commit(ctx) != nil {
 		return nil, ErrUnavailable
 	}
 	return revisions, nil
+}
+
+type notificationPosition struct{ AppID, State, Reason string }
+type notificationAvailability struct {
+	AppID               string
+	ForeignInstallation bool
+	Blocking            int
+}
+
+// Hints cover the redacted view's dependencies, not just the independent state
+// API. They intentionally use a distinct opaque digest, never an API cursor.
+func notificationDigest(value any) string {
+	raw, _ := json.Marshal(value)
+	sum := sha256.Sum256(raw)
+	return "hint:" + hex.EncodeToString(sum[:])
+}
+
+func (m *Memory) notificationViews(bindings []Binding, entries []catalog.Entry) (map[string]string, []notificationPosition, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(entries) > 1000 {
+		return nil, nil, ErrLimit
+	}
+	_, scopes, err := m.viewsLocked(bindings)
+	if err != nil {
+		return nil, nil, err
+	}
+	now := m.now()
+	positions := make([]notificationPosition, 0, len(entries))
+	for _, entry := range entries {
+		observation := m.catalogPosition(entry, now)
+		positions = append(positions, notificationPosition{entry.AppID, observation.State, observation.Reason})
+	}
+	sort.Slice(positions, func(i, j int) bool { return positions[i].AppID < positions[j].AppID })
+	return scopes, positions, nil
+}
+
+func notificationBlockers(ctx context.Context, tx pgx.Tx, station string) (map[string]int, error) {
+	rows, err := tx.Query(ctx, `SELECT app_id,LEAST(count(*),2)::int FROM (
+ SELECT app_id FROM station.app_operations WHERE station_id=$1 AND status IN ('accepted','running')
+ UNION ALL
+ SELECT app_id FROM station.app_installation_transitions WHERE station_id=$1 AND status NOT IN ('succeeded','failed')
+ ) active GROUP BY app_id ORDER BY app_id LIMIT 1001`, station)
+	if err != nil {
+		return nil, ErrUnavailable
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var app string
+		var count int
+		if rows.Scan(&app, &count) != nil {
+			return nil, ErrUnavailable
+		}
+		out[app] = count
+	}
+	if rows.Err() != nil {
+		return nil, ErrUnavailable
+	}
+	if len(out) > 1000 {
+		return nil, ErrLimit
+	}
+	return out, nil
 }
 
 type notificationSink interface {
