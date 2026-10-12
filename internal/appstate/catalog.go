@@ -169,7 +169,7 @@ func (m *Memory) catalogPosition(e catalog.Entry, now time.Time) catalog.Observa
 		if _, occupied := c.objects[e.Namespace+"/"+e.WorkloadName]; occupied {
 			obs.Reason = "unavailable"
 		} else if !c.inventoryAt.IsZero() && now.Before(c.inventoryExpires) {
-			obs.State, obs.Reason, obs.ObservedAt = "not_installed", "not_found", c.inventoryAt
+			obs.State, obs.Reason, obs.ObservedAt = "not_installed", "not_found", c.inventoryAt.UTC()
 		}
 	}
 	return obs

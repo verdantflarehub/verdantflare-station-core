@@ -43,6 +43,49 @@ func catalogEntry(o ResourceObservation) catalog.Entry {
 	return catalog.Entry{AppID: o.AppID, Namespace: o.Namespace, WorkloadName: o.Name, DisplayName: "Trusted display", GroupID: "system", Brand: "vf", Version: "1.0.0", Source: "deploys/apps/fixture.dp.yaml", Models: []string{}, Images: []catalog.Image{{Component: "server", Image: "example.invalid/declared:1"}}}
 }
 
+func TestMemoryCatalogFactsNonUTCClock(t *testing.T) {
+	for _, offset := range []int{8 * 3600, -7 * 3600} {
+		for _, mode := range []string{"observed", "absent", "expired"} {
+			m, s, b, o, now := memoryFixture(t, false)
+			*now = now.In(time.FixedZone("test", offset))
+			o.Metadata = metadataFixture()
+			observed := *now
+			want := "ready"
+			if mode == "absent" {
+				memoryFull(t, s)
+				want = "not_installed"
+			} else {
+				memoryFull(t, s, o)
+			}
+			if mode == "expired" {
+				*now = now.Add(31 * time.Second)
+				want = "unknown"
+			}
+			items, _, err := m.catalogSnapshot(b.OrganizationID, []catalog.Entry{catalogEntry(o)}, []Binding{b})
+			if err != nil || len(items) != 1 || items[0].Deployment.State != want {
+				t.Fatalf("offset=%d mode=%s projection failed: %v", offset, mode, err)
+			}
+			stamp := items[0].Deployment.ObservedAt
+			if stamp.Location() != time.UTC || !stamp.Equal(observed) {
+				t.Fatalf("offset=%d mode=%s timestamp changed instant or is not UTC: %v", offset, mode, stamp)
+			}
+			user := identity.IdentityContext{UserID: uuid.NewString(), OrganizationID: b.OrganizationID, StationID: o.StationID, Roles: []string{"admin"}, Scopes: []string{"app:read"}}
+			facts, err := appcenter.BuildState(user, uuid.NewString(), *now, items, nil, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, err := json.Marshal(facts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var decoded appcenter.Facts
+			if err := appcenter.Decode(bytes.NewReader(raw), "facts", 4<<20, &decoded); err != nil {
+				t.Fatalf("offset=%d mode=%s violates consumer facts schema: %v", offset, mode, err)
+			}
+		}
+	}
+}
+
 func TestMemoryCatalogUsesScopedCoherentProjection(t *testing.T) {
 	m, s, b, o, now := memoryFixture(t, false)
 	o.Metadata = metadataFixture()

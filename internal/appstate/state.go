@@ -56,7 +56,7 @@ type Operation struct {
 // RuntimeView never confuses missing/expired evidence with an absent workload.
 // now is the Core service clock, not a client or collector timestamp.
 func RuntimeView(now time.Time, state, reason *string, received, expires *time.Time, expired bool) Runtime {
-	out := Runtime{State: "unknown", Quality: "unknown", ReasonCode: "NOT_OBSERVED", ObservedAt: received, ExpiresAt: expires}
+	out := Runtime{State: "unknown", Quality: "unknown", ReasonCode: "NOT_OBSERVED", ObservedAt: utcTime(received), ExpiresAt: utcTime(expires)}
 	if state == nil || reason == nil || received == nil || expires == nil {
 		return out
 	}
@@ -78,4 +78,14 @@ func RuntimeView(now time.Time, state, reason *string, received, expires *time.T
 		out.Quality = "known"
 	}
 	return out
+}
+
+// Wire timestamps are UTC regardless of the Core process timezone. Copy them so
+// callers cannot mutate the evidence retained in memory through a returned view.
+func utcTime(value *time.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+	utc := value.UTC()
+	return &utc
 }
