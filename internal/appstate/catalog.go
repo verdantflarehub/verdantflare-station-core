@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/catalog"
+	"github.com/verdantflarehub/verdantflare-station-core/internal/identity"
 )
 
 // CatalogSnapshot joins trusted metadata to the same memory projection used by
@@ -33,6 +34,11 @@ func (m *Memory) catalogSnapshot(organization string, entries []catalog.Entry, b
 	if err != nil {
 		return nil, nil, err
 	}
+	return m.catalogSnapshotLocked(organization, entries, bindings, snapshot)
+}
+
+// catalogSnapshotLocked only adapts metadata; snapshot owns state interpretation.
+func (m *Memory) catalogSnapshotLocked(organization string, entries []catalog.Entry, bindings []Binding, snapshot memorySnapshot) ([]catalog.SnapshotItem, map[string]MemoryView, error) {
 	views := map[string]MemoryView{}
 	locations := map[string]MemoryView{}
 	for _, b := range bindings {
@@ -84,6 +90,72 @@ func (m *Memory) catalogSnapshot(organization string, entries []catalog.Entry, b
 		return a.AppID+"/"+a.Namespace+"/"+a.WorkloadName < b.AppID+"/"+b.Namespace+"/"+b.WorkloadName
 	})
 	return items, views, nil
+}
+
+// RegisteredCatalog serves the legacy public catalog without network discovery.
+// Missing release metadata remains visible through the installation APIs, not
+// through invented legacy catalog entries.
+func (s *Service) RegisteredCatalog(ctx context.Context, user identity.IdentityContext) ([]catalog.Item, error) {
+	if s == nil || user.StationID != s.StationID || !validID(user.StationID) || !validID(user.OrganizationID) || !validID(user.UserID) || !slices.Contains(user.Roles, "admin") || !slices.Contains(user.Scopes, "app:read") {
+		return nil, identity.Denied
+	}
+	if s.Pool == nil || s.Catalog == nil {
+		return nil, ErrUnavailable
+	}
+	tx, err := s.Pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return nil, ErrUnavailable
+	}
+	defer rollback(tx)
+	bindings, err := s.readBindings(ctx, tx, "")
+	if err != nil {
+		return nil, err
+	}
+	items, err := s.memory().registeredCatalog(user.OrganizationID, s.Catalog.Entries(), bindings)
+	if err != nil {
+		return nil, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return nil, ErrUnavailable
+	}
+	return items, nil
+}
+
+func (m *Memory) registeredCatalog(organization string, entries []catalog.Entry, bindings []Binding) ([]catalog.Item, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !validID(organization) || len(entries) > 1000 {
+		return nil, ErrLimit
+	}
+	snapshot, err := m.snapshotLocked(bindings)
+	if err != nil {
+		return nil, err
+	}
+	items, _, err := m.catalogSnapshotLocked(organization, entries, bindings, snapshot)
+	if err != nil {
+		return nil, err
+	}
+	byApp := map[string][]string{}
+	for _, b := range bindings {
+		if b.OrganizationID == organization {
+			byApp[b.AppID] = append(byApp[b.AppID], b.InstallationID)
+		}
+	}
+	out := make([]catalog.Item, 0, len(entries))
+	for _, item := range items {
+		if !item.Registered {
+			continue
+		}
+		ids := byApp[item.AppID]
+		if len(ids) == 1 {
+			item.Deployment = catalogObservation(snapshot.installations[ids[0]])
+		} else if len(ids) > 1 {
+			item.Deployment = catalogObservation(MemoryView{})
+		}
+		item.ProjectManagement(m.station, organization)
+		out = append(out, item.Item)
+	}
+	return out, nil
 }
 
 // catalogPosition requires m.mu. A trusted position grants no ownership;
