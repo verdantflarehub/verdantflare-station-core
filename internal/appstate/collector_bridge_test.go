@@ -31,6 +31,21 @@ func TestCollectorBridge(t *testing.T) {
 		t.Fatal(err)
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/test/session" {
+			if r.Header.Get("Authorization") != "Bearer "+token {
+				w.WriteHeader(401)
+				return
+			}
+			s.Observations.mu.Lock()
+			active := s.Observations.collectors["runtime"].active
+			id := ""
+			if active != nil {
+				id = active.id
+			}
+			s.Observations.mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]string{"sessionId": id})
+			return
+		}
 		if r.URL.Path == "/test/snapshot" {
 			if r.Header.Get("Authorization") != "Bearer "+token {
 				w.WriteHeader(401)
