@@ -141,6 +141,18 @@ func run() int {
 	stateDone := make(chan struct{})
 	go func() { defer close(stateDone); appStates.RunExpiry(stateCtx, logger) }()
 	defer func() { stopState(); <-stateDone }()
+	statePublisher, closePublisher, err := appstate.NewPublisher(appStates, os.Getenv)
+	if err != nil {
+		logger.Error("app_state_notification_configuration_invalid")
+		return 1
+	}
+	defer closePublisher()
+	if statePublisher != nil {
+		publishCtx, stopPublisher := context.WithCancel(ctx)
+		publishDone := make(chan struct{})
+		go func() { defer close(publishDone); statePublisher.Run(publishCtx, logger) }()
+		defer func() { stopPublisher(); <-publishDone }()
+	}
 	ops.Releases = &releasebinding.Source{Path: os.Getenv("STATION_PREINSTALLED_RELEASE_REGISTRY")}
 	if path := os.Getenv("STATION_APP_TRANSITION_RELEASE_REGISTRY"); path != "" {
 		ops.TransitionReleases = &operations.TransitionReleases{Path: path}
