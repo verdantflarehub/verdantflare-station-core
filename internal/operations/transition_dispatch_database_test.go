@@ -351,6 +351,10 @@ func TestTransitionDispatchProofBindingAndMonotonicPhases(t *testing.T) {
 func TestTransitionDispatchRejectionAuditRollbackAndAdmission(t *testing.T) {
 	svc, user, command, reader := transitionDatabase(t)
 	ctx := context.Background()
+	var before string
+	if err := svc.Pool.QueryRow(ctx, `SELECT row_to_json(i)::text FROM station.app_installations i WHERE installation_id=$1`, command.InstallationID).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
 	accepted, err := svc.SubmitTransition(ctx, user, command, reader)
 	if err != nil {
 		t.Fatal(err)
@@ -381,7 +385,11 @@ func TestTransitionDispatchRejectionAuditRollbackAndAdmission(t *testing.T) {
 	}
 	out, err := svc.DispatchTransition(ctx, accepted.OperationID, runtime)
 	if err != nil || out.Phase != "completed" || out.Status != "failed" {
-		t.Fatal("safe pre-seal rejection failed", err)
+		t.Fatal("safe pre-replacement rejection failed", err)
+	}
+	var after string
+	if err := svc.Pool.QueryRow(ctx, `SELECT row_to_json(i)::text FROM station.app_installations i WHERE installation_id=$1`, command.InstallationID).Scan(&after); err != nil || after != before {
+		t.Fatal("rejection changed installation", err)
 	}
 	if _, err := svc.Submit(ctx, user, ordinary); err != nil {
 		t.Fatal("terminal rejection retained admission block", err)

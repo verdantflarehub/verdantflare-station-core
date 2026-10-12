@@ -201,7 +201,7 @@ func (s *Service) DispatchTransition(ctx context.Context, operation string, runt
 		case "recovery_required":
 			status, phase = "recovery_required", "recovery_required"
 		case "rejected":
-			// Runtime may certify rejection only before any seal or mutation.
+			// Runtime certifies source cancellation before any resource replacement.
 			if r.Phase != "checking" && r.Phase != "sealing" {
 				return r.Transition, ErrTransitionProgress
 			}
