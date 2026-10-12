@@ -179,6 +179,10 @@ func run() int {
 		logger.Error("invalid_transition_runtime_configuration")
 		return 1
 	}
+	if err := ops.ConfigureTransitionAdmission(os.Getenv("STATION_APP_TRANSITION_ACCEPT_COMMANDS"), transitionRuntime); err != nil {
+		logger.Error("invalid_transition_admission_configuration")
+		return 1
+	}
 	if transitionRuntime != nil {
 		transitionCtx, stopTransitions := context.WithCancel(ctx)
 		transitionDone := make(chan struct{})

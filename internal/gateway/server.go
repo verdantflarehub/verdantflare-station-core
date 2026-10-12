@@ -29,7 +29,7 @@ import (
 	"github.com/verdantflarehub/verdantflare-station-core/migrations"
 )
 
-const Version = "0.3.29"
+const Version = "0.3.30"
 
 var requestIDPattern = regexp.MustCompile(`^[a-zA-Z0-9._:-]{1,128}$`)
 
@@ -233,6 +233,7 @@ func (s *Server) ServeHTTP(original http.ResponseWriter, r *http.Request) {
 		return
 	}
 	routes := map[string]string{
+		transitionPath:                                    "POST",
 		"/internal/app-states/v1/stream":                  "POST",
 		"/app-states/v1":                                  "GET",
 		"/appcenter/v1/facts":                             "GET",
@@ -260,6 +261,9 @@ func (s *Server) ServeHTTP(original http.ResponseWriter, r *http.Request) {
 		routes[r.URL.Path] = "GET"
 	}
 	if strings.HasPrefix(r.URL.Path, "/preinstalled/apps/") || strings.HasPrefix(r.URL.Path, "/preinstalled/releases/") {
+		routes[r.URL.Path] = "GET"
+	}
+	if strings.HasPrefix(r.URL.Path, transitionPath+"/") {
 		routes[r.URL.Path] = "GET"
 	}
 	method, ok := routes[r.URL.Path]
@@ -420,6 +424,10 @@ func (s *Server) ServeHTTP(original http.ResponseWriter, r *http.Request) {
 	}
 	if route == "/app-states/v1" || strings.HasPrefix(route, "/app-states/v1/installations/") {
 		s.serveAppStates(w, r, ctx, requestID, user)
+		return
+	}
+	if route == transitionPath || strings.HasPrefix(route, transitionPath+"/") {
+		s.serveTransitions(w, r, ctx, requestID, user)
 		return
 	}
 	if route == "/app-installations" || strings.HasPrefix(route, "/app-installations/") {

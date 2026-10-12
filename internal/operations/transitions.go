@@ -15,8 +15,8 @@ import (
 	"github.com/verdantflarehub/verdantflare-station-core/internal/identity"
 )
 
-// Separate from AppCommand v1. No gateway exposes this until the complete
-// executor, admission and verified release reader are available.
+// Separate from AppCommand v1. The managed gateway gates new acceptance on
+// explicit startup configuration; durable replay remains available.
 type TransitionCommand struct {
 	RequestID        string `json:"request_id"`
 	IdempotencyKey   string `json:"idempotency_key"`

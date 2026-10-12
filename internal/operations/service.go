@@ -46,14 +46,15 @@ type Operation struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 type Service struct {
-	Pool                     *pgxpool.Pool
-	Catalog                  *catalog.Service
-	AppStates                *appstate.Service
-	StationID                string
-	Releases                 *releasebinding.Source
-	TransitionReleases       *TransitionReleases
-	AppCenterRuntime         pb.AppCenterRuntimeClient
-	AppCenterAdmissionSource *AppCenterAdmissionSource
+	transitionAdmissionEnabled bool
+	Pool                       *pgxpool.Pool
+	Catalog                    *catalog.Service
+	AppStates                  *appstate.Service
+	StationID                  string
+	Releases                   *releasebinding.Source
+	TransitionReleases         *TransitionReleases
+	AppCenterRuntime           pb.AppCenterRuntimeClient
+	AppCenterAdmissionSource   *AppCenterAdmissionSource
 }
 
 func (s *Service) Submit(ctx context.Context, u identity.IdentityContext, c Command) (Operation, error) {
