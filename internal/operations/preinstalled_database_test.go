@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/verdantflarehub/verdantflare-station-core/internal/appstate"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/catalog"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/identity"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/releasebinding"
@@ -27,17 +28,23 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-type preinstalledObservation struct{ current catalog.Observation }
+type preinstalledObservation struct{ t *testing.T }
 
 func (r *preinstalledObservation) Observe(context.Context, catalog.Entry) catalog.Observation {
-	return r.current
+	r.t.Error("preinstalled/command path called Kubernetes Observe")
+	return catalog.Observation{}
+}
+
+func (r *preinstalledObservation) Discover(context.Context) ([]catalog.Item, error) {
+	r.t.Error("preinstalled/command path called Kubernetes Discover")
+	return nil, nil
 }
 
 type preinstalledDatabase struct {
 	service  *Service
 	actor    identity.IdentityContext
 	binding  releasebinding.Binding
-	reader   *preinstalledObservation
+	stream   *appstate.StreamSession
 	registry string
 	original []byte
 }
@@ -63,7 +70,7 @@ func preinstalledDatabaseFixture(t *testing.T) *preinstalledDatabase {
 	if err = os.WriteFile(path, []byte(`[{"app_id":"test-app","display_name":"Test","group_id":"video","brand":"vf","models":[],"source":"deploys/test.yaml","namespace":"test","workload_name":"test-app","version":"1.0.0","images":[{"component":"server","image":"example.invalid/test:1.0.0"}]}]`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	reader := &preinstalledObservation{catalog.Observation{State: "not_installed", ObservedAt: time.Now().UTC(), Images: []catalog.Image{}}}
+	reader := &preinstalledObservation{t}
 	apps, err := catalog.Load(path, reader)
 	if err != nil {
 		t.Fatal(err)
@@ -90,7 +97,24 @@ func preinstalledDatabaseFixture(t *testing.T) *preinstalledDatabase {
 			t.Fatal(err)
 		}
 	}
-	return &preinstalledDatabase{service: &Service{Pool: pool, Catalog: apps, StationID: station, Releases: &releasebinding.Source{Path: registry}}, actor: session.IdentityContext, binding: binding, reader: reader, registry: registry, original: raw}
+	memory, err := appstate.NewMemory(station, []appstate.Collector{{ID: "runtime", Namespaces: []string{"test"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream, err := memory.Open("runtime")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(stream.Close)
+	syncID := uuid.NewString()
+	if err = stream.Begin(syncID); err != nil {
+		t.Fatal(err)
+	}
+	if err = stream.End(syncID, 0); err != nil {
+		t.Fatal(err)
+	}
+	states := &appstate.Service{Pool: pool, Catalog: apps, StationID: station, Observations: memory}
+	return &preinstalledDatabase{service: &Service{Pool: pool, Catalog: apps, AppStates: states, StationID: station, Releases: &releasebinding.Source{Path: registry}}, actor: session.IdentityContext, binding: binding, stream: stream, registry: registry, original: raw}
 }
 func (f *preinstalledDatabase) inventory(t *testing.T) PreinstalledInventory {
 	t.Helper()
@@ -287,7 +311,9 @@ func TestPreinstalledDatabaseLegacyAdoptionNeedsSuccessfulBoundOperation(t *test
 		t.Fatal(found, err)
 	}
 	uid := uuid.NewString()
-	f.reader.current = catalog.Observation{State: "running", UID: uid, ObservedAt: time.Now().UTC(), Images: []catalog.Image{}}
+	if err := f.stream.Upsert(appstate.ResourceObservation{Namespace: "test", Name: "test-app", UID: uid, ResourceVersion: "1", Generation: 1, ObservedGeneration: 1, Desired: 1, Replicas: 1, Ready: 1, Updated: 1, Available: 1, Health: "not_checked", Metadata: &appstate.ResourceMetadata{Images: []appstate.ResourceImage{{Component: "server", Image: "example.invalid/test:1.0.0"}}, ImagesComplete: true}}); err != nil {
+		t.Fatal(err)
+	}
 	command := f.command(t, "preinstalled-adoption-1")
 	command.Command.Action = "adopt"
 	command.Command.ExpectedWorkloadUID = uid
@@ -312,5 +338,56 @@ func TestPreinstalledDatabaseLegacyAdoptionNeedsSuccessfulBoundOperation(t *test
 	f.dispatch(t, "succeeded", "adopt", uid)
 	if !f.inventory(t).History[0].Confirmed {
 		t.Fatal("successful bound adoption not confirmed")
+	}
+}
+
+func TestPreinstalledDatabaseMemoryInventoryAndDurableRevision(t *testing.T) {
+	f := preinstalledDatabaseFixture(t)
+	ctx := context.Background()
+	initial := f.inventory(t)
+	if initial.WorkloadUID != "" || len(initial.History) != 0 {
+		t.Fatal("empty inventory fabricated identity", initial)
+	}
+	object := appstate.ResourceObservation{Namespace: "test", Name: "test-app", UID: uuid.NewString(), ResourceVersion: "1", Generation: 1, ObservedGeneration: 1, Desired: 1, Replicas: 1, Ready: 1, Updated: 1, Available: 1, Health: "not_checked", Metadata: &appstate.ResourceMetadata{Images: []appstate.ResourceImage{{Component: "server", Image: "example.invalid/test:1.0.0"}}, ImagesComplete: true}}
+	if err := f.stream.Upsert(object); err != nil {
+		t.Fatal(err)
+	}
+	observed := f.inventory(t)
+	if observed.ManagementStatus != "unmanaged" || observed.WorkloadUID != object.UID || observed.Revision != initial.Revision {
+		t.Fatal("observation became durable history", observed)
+	}
+	object.UID = uuid.NewString()
+	if err := f.stream.Upsert(object); err != nil {
+		t.Fatal(err)
+	}
+	replaced := f.inventory(t)
+	if replaced.WorkloadUID == observed.WorkloadUID || replaced.WorkloadUID != object.UID || replaced.Revision != observed.Revision {
+		t.Fatal("candidate replacement lost UID or altered history CAS", replaced)
+	}
+	readOnly := f.actor
+	readOnly.Scopes = []string{"app:read"}
+	view, err := f.service.PreinstalledInventory(ctx, readOnly, f.binding.AppID)
+	if err != nil || view.Complete || view.WorkloadUID != "" {
+		t.Fatal("read-only actor received adoption candidate", view, err)
+	}
+	states := f.service.AppStates
+	memory, err := appstate.NewMemory(f.actor.StationID, []appstate.Collector{{ID: "runtime", Namespaces: []string{"test"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.service.AppStates = &appstate.Service{Pool: f.service.Pool, Catalog: f.service.Catalog, StationID: f.actor.StationID, Observations: memory}
+	view, err = f.service.PreinstalledInventory(ctx, f.actor, f.binding.AppID)
+	if err != nil || view.Complete || view.WorkloadUID != "" || view.Revision != initial.Revision {
+		t.Fatal("Core restart fabricated absence or lost durable revision", view, err)
+	}
+	f.service.AppStates = nil
+	if _, err = f.service.PreinstalledInventory(ctx, f.actor, f.binding.AppID); !errors.Is(err, appstate.ErrUnavailable) {
+		t.Fatal("missing state service silently fell back", err)
+	}
+	f.service.AppStates = states
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err = f.service.PreinstalledInventory(canceled, f.actor, f.binding.AppID); err == nil {
+		t.Fatal("database failure returned complete inventory")
 	}
 }

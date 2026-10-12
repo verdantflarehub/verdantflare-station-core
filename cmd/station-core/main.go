@@ -102,22 +102,16 @@ func run() int {
 		return 0
 	}
 	var appCatalog *catalog.Service
-	var k8sReader *catalog.Kubernetes
 	if path := os.Getenv("STATION_CATALOG_FILE"); path != "" {
-		reader, e := catalog.NewKubernetes(os.Getenv("STATION_KUBECONFIG"))
-		if e != nil {
-			logger.Error("catalog_kubernetes_configuration_invalid")
-			return 1
-		}
-		k8sReader = reader
-		appCatalog, e = catalog.Load(path, reader)
+		var e error
+		appCatalog, e = catalog.Load(path, nil)
 		if e != nil {
 			logger.Error("catalog_configuration_invalid")
 			return 1
 		}
-	} else {
-		k8sReader, _ = catalog.NewKubernetes(os.Getenv("STATION_KUBECONFIG"))
 	}
+	// Kubernetes is retained only for Pod/metrics telemetry, never app state.
+	k8sReader, _ := catalog.NewKubernetes(os.Getenv("STATION_KUBECONFIG"))
 	ops := &operations.Service{Pool: pool, Catalog: appCatalog, StationID: c.StationID}
 	appStates := &appstate.Service{Pool: pool, StationID: c.StationID, Catalog: appCatalog}
 	ops.AppStates = appStates

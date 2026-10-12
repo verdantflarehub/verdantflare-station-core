@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/verdantflarehub/verdantflare-station-core/internal/appstate"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/identity"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/releasebinding"
 )
@@ -109,23 +110,29 @@ func (s *Service) PreinstalledInventory(ctx context.Context, u identity.Identity
 	if !preinstalledApp.MatchString(app) {
 		return out, identity.Invalid
 	}
-	items, err := readPreinstalledHistory(ctx, s.Pool, s.StationID, u.OrganizationID, app)
+	if s.Pool == nil || s.AppStates == nil {
+		return out, appstate.ErrUnavailable
+	}
+	tx, err := s.Pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return out, appstate.ErrUnavailable
+	}
+	defer tx.Rollback(ctx)
+	items, err := readPreinstalledHistory(ctx, tx, s.StationID, u.OrganizationID, app)
 	if err != nil {
 		return out, err
 	}
 	out.History = items
 	out.Revision = inventoryRevision(items)
-	if s.Catalog != nil {
-		item, ok := s.Catalog.Get(ctx, app)
-		if ok {
-			item.ProjectManagement(s.StationID, u.OrganizationID)
-			out.WorkloadUID = item.Deployment.UID
-			out.ManagementStatus = item.Deployment.ManagementStatus
-			out.ObservedAt = item.Deployment.ObservedAt
-			out.Complete = item.Deployment.State != "unknown" && (item.Deployment.State == "not_installed" || out.WorkloadUID != "")
-		}
+	observation, err := s.AppStates.PreinstalledObservation(ctx, tx, u, app)
+	if err != nil {
+		return out, err
 	}
-	return out, nil
+	out.WorkloadUID = observation.UID
+	out.ManagementStatus = observation.ManagementStatus
+	out.ObservedAt = observation.ObservedAt
+	out.Complete = observation.State != "unknown" && (observation.State == "not_installed" || out.WorkloadUID != "")
+	return out, tx.Commit(ctx)
 }
 func (s *Service) validatePreinstalled(ctx context.Context, tx pgx.Tx, u identity.IdentityContext, in *PreinstalledCommand) error {
 	if s.Releases == nil || s.Releases.Verify(in.Release) != nil {

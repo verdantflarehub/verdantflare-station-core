@@ -140,7 +140,7 @@ func (s *Service) submit(ctx context.Context, u identity.IdentityContext, c Comm
 		if s.Catalog == nil {
 			return o, identity.Invalid
 		}
-		a, ok := s.Catalog.Get(ctx, c.AppID)
+		a, ok := s.Catalog.Entry(c.AppID)
 		if !ok || a.Version != c.AppVersion {
 			return o, identity.Invalid
 		}

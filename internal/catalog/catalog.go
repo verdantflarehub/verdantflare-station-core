@@ -65,6 +65,16 @@ type Service struct {
 	discoverer Discoverer
 }
 
+// Entry returns registered release metadata without observing any workload.
+func (s *Service) Entry(id string) (Entry, bool) {
+	for _, entry := range s.Entries() {
+		if entry.AppID == id {
+			return entry, true
+		}
+	}
+	return Entry{}, false
+}
+
 // Entries returns only trusted local metadata. It never calls discovery or a
 // workload reader and does not expose mutable slices from the loaded registry.
 func (s *Service) Entries() []Entry {

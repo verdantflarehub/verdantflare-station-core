@@ -36,22 +36,35 @@ func TestOperationRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	apps, err := catalog.Load(path, nil)
+	apps, err := catalog.Load(path, &preinstalledObservation{t})
 	if err != nil {
 		t.Fatal(err)
 	}
 	svc := Service{Pool: pool, Catalog: apps, StationID: station}
 	u := session.IdentityContext
 	c := Command{RequestID: "request-1", IdempotencyKey: "recovery-key-1", OrganizationID: u.OrganizationID, StationID: station, AppID: "test-app", AppVersion: "1.0.0", Action: "install"}
+	for _, variant := range []string{"unregistered", "wrong-version"} {
+		invalid := c
+		if variant == "unregistered" {
+			invalid.AppID = "unknown-app"
+		} else {
+			invalid.AppVersion = "9.9.9"
+		}
+		if _, err := svc.Submit(ctx, u, invalid); !errors.Is(err, identity.Invalid) {
+			t.Fatal("untrusted metadata admitted", variant, err)
+		}
+	}
 	first, err := svc.Submit(ctx, u, c)
 	if err != nil {
 		t.Fatal(err)
 	}
 	c.RequestID = "request-2"
+	svc.Catalog = nil
 	replay, err := svc.Submit(ctx, u, c)
 	if err != nil || replay.OperationID != first.OperationID {
 		t.Fatalf("replay: %v", err)
 	}
+	svc.Catalog = apps
 	c.IdempotencyKey = "recovery-key-2"
 	if _, err = svc.Submit(ctx, u, c); !errors.Is(err, identity.Conflict) {
 		t.Fatalf("concurrent command: %v", err)
