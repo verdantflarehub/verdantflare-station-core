@@ -19,6 +19,9 @@ func TestAppCenterUpgradePreservesInstallationHistory(t *testing.T) {
 func TestManagementReleaseUpgradePreservesInstallationHistory(t *testing.T) {
 	testOperationJournalUpgrade(t, 16, "station.appcenter_operation_inputs")
 }
+func TestAppStateUpgradePreservesInstallationHistory(t *testing.T) {
+	testOperationJournalUpgrade(t, 17, "station.app_state_observations")
+}
 func testOperationJournalUpgrade(t *testing.T, previous int, table string) {
 	t.Helper()
 	ctx := t.Context()

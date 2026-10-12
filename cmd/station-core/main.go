@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"github.com/verdantflarehub/verdantflare-station-core/internal/appstate"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/catalog"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/config"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/egress"
@@ -117,6 +118,20 @@ func run() int {
 		k8sReader, _ = catalog.NewKubernetes(os.Getenv("STATION_KUBECONFIG"))
 	}
 	ops := &operations.Service{Pool: pool, Catalog: appCatalog, StationID: c.StationID}
+	appStates := &appstate.Service{Pool: pool, StationID: c.StationID}
+	if appCatalog != nil {
+		seedCtx, finish := context.WithTimeout(ctx, 10*time.Second)
+		err := appStates.SyncCatalog(seedCtx, appCatalog.RegisteredAppIDs())
+		finish()
+		if err != nil {
+			logger.Error("app_state_catalog_unavailable")
+			return 1
+		}
+	}
+	stateCtx, stopState := context.WithCancel(ctx)
+	stateDone := make(chan struct{})
+	go func() { defer close(stateDone); appStates.RunExpiry(stateCtx, logger) }()
+	defer func() { stopState(); <-stateDone }()
 	ops.Releases = &releasebinding.Source{Path: os.Getenv("STATION_PREINSTALLED_RELEASE_REGISTRY")}
 	if path := os.Getenv("STATION_APP_TRANSITION_RELEASE_REGISTRY"); path != "" {
 		ops.TransitionReleases = &operations.TransitionReleases{Path: path}
@@ -187,7 +202,7 @@ func run() int {
 		logger.Error("invalid_installation_access_configuration")
 		return 1
 	}
-	server := &http.Server{Addr: c.Listen, Handler: &gateway.Server{Identity: service, BootstrapToken: c.BootstrapToken, Logger: logger, Catalog: appCatalog, Operations: ops, Telemetry: telemetryService, BlenderControl: blenderControl, Egress: egressService, AppAccess: appAccess, InstallationAccess: installationAccess}, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 65 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
+	server := &http.Server{Addr: c.Listen, Handler: &gateway.Server{AppStates: appStates, Identity: service, BootstrapToken: c.BootstrapToken, Logger: logger, Catalog: appCatalog, Operations: ops, Telemetry: telemetryService, BlenderControl: blenderControl, Egress: egressService, AppAccess: appAccess, InstallationAccess: installationAccess}, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 65 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	done := make(chan error, 1)
 	go func() { done <- server.ListenAndServe() }()
 	logger.Info("station_core_starting", "version", gateway.Version, "station_id", c.StationID, "listen", c.Listen, "contracts_major", migrations.ContractsMajor, "migration_version", migrations.Version, "session_ttl", c.SessionTTL.String(), "login_failure_limit", 5, "account_lock_duration", "15m", "log_level", c.LogLevel)

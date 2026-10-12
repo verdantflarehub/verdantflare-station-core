@@ -65,6 +65,16 @@ type Service struct {
 	discoverer Discoverer
 }
 
+// RegisteredAppIDs reads the trusted in-process configuration only. It must
+// never invoke workload discovery while seeding the Core state read model.
+func (s *Service) RegisteredAppIDs() []string {
+	ids := make([]string, 0, len(s.entries))
+	for _, entry := range s.entries {
+		ids = append(ids, entry.AppID)
+	}
+	return ids
+}
+
 var dnsName = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
 var version = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
 

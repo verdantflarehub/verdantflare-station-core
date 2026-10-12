@@ -20,6 +20,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/verdantflarehub/verdantflare-station-core/internal/appstate"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/catalog"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/egress"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/identity"
@@ -52,6 +53,7 @@ type StationHealth struct {
 	RequestID  string            `json:"request_id"`
 }
 type Server struct {
+	AppStates          *appstate.Service
 	Identity           *identity.Service
 	BootstrapToken     string
 	Logger             *slog.Logger
@@ -228,6 +230,7 @@ func (s *Server) ServeHTTP(original http.ResponseWriter, r *http.Request) {
 		return
 	}
 	routes := map[string]string{
+		"/app-states/v1":                           "GET",
 		"/appcenter/v1/facts":                      "GET",
 		"/appcenter/v1/commands":                   "POST",
 		"/internal/v1/app-installations/authorize": "POST",
@@ -246,6 +249,9 @@ func (s *Server) ServeHTTP(original http.ResponseWriter, r *http.Request) {
 		routes[r.URL.Path] = "GET"
 	}
 	if r.URL.Path == "/app-installations" || strings.HasPrefix(r.URL.Path, "/app-installations/") {
+		routes[r.URL.Path] = "GET"
+	}
+	if strings.HasPrefix(r.URL.Path, "/app-states/v1/installations/") {
 		routes[r.URL.Path] = "GET"
 	}
 	if strings.HasPrefix(r.URL.Path, "/preinstalled/apps/") || strings.HasPrefix(r.URL.Path, "/preinstalled/releases/") {
@@ -401,6 +407,10 @@ func (s *Server) ServeHTTP(original http.ResponseWriter, r *http.Request) {
 	}
 	if strings.HasPrefix(route, "/preinstalled/") {
 		s.servePreinstalled(w, r, ctx, requestID, user)
+		return
+	}
+	if route == "/app-states/v1" || strings.HasPrefix(route, "/app-states/v1/installations/") {
+		s.serveAppStates(w, r, ctx, requestID, user)
 		return
 	}
 	if route == "/app-installations" || strings.HasPrefix(route, "/app-installations/") {

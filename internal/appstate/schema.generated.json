@@ -1,0 +1,279 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "station://contracts/v1/app-state-snapshot",
+  "title": "Core application state snapshot v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "scope",
+    "revision",
+    "generatedAt",
+    "items"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "scope": {
+      "$ref": "#/$defs/scope"
+    },
+    "revision": {
+      "$ref": "#/$defs/revision"
+    },
+    "generatedAt": {
+      "$ref": "#/$defs/time"
+    },
+    "items": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": {
+        "$ref": "#/$defs/item"
+      }
+    }
+  },
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f-]{36}$"
+    },
+    "revision": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "maxLength": 19
+    },
+    "time": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stationId",
+        "organizationId"
+      ],
+      "properties": {
+        "stationId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "organizationId": {
+          "$ref": "#/$defs/uuid"
+        }
+      }
+    },
+    "installation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "revision",
+        "appVersion",
+        "state",
+        "lastOperationId"
+      ],
+      "properties": {
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9223372036854775807
+        },
+        "appVersion": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
+          "maxLength": 128
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "installed",
+            "failed",
+            "removed"
+          ]
+        },
+        "lastOperationId": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "quality",
+        "reasonCode",
+        "observedAt",
+        "expiresAt",
+        "lastKnownState"
+      ],
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": [
+            "unknown",
+            "absent",
+            "starting",
+            "ready",
+            "degraded",
+            "stopping",
+            "stopped"
+          ]
+        },
+        "quality": {
+          "type": "string",
+          "enum": [
+            "known",
+            "unknown"
+          ]
+        },
+        "reasonCode": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+        },
+        "observedAt": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "expiresAt": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lastKnownState": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "absent",
+                "starting",
+                "ready",
+                "degraded",
+                "stopping",
+                "stopped"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "operation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operationId",
+        "protocol",
+        "status",
+        "phase",
+        "blocking"
+      ],
+      "properties": {
+        "operationId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "protocol": {
+          "type": "string",
+          "enum": [
+            "lifecycle",
+            "transition"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "accepted",
+            "running",
+            "succeeded",
+            "failed",
+            "recovery_required"
+          ]
+        },
+        "phase": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "blocking": {
+          "type": "boolean"
+        }
+      }
+    },
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "appId",
+        "installationId",
+        "stateRevision",
+        "installation",
+        "runtime",
+        "operation"
+      ],
+      "properties": {
+        "appId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "installationId": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stateRevision": {
+          "$ref": "#/$defs/revision"
+        },
+        "installation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/installation"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "runtime": {
+          "$ref": "#/$defs/runtime"
+        },
+        "operation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/operation"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    }
+  }
+}
