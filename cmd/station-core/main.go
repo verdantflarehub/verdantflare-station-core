@@ -137,6 +137,13 @@ func run() int {
 			return 1
 		}
 	}
+	legacyCtx, finishLegacy := context.WithTimeout(ctx, 10*time.Second)
+	err = appStates.LoadLegacy(legacyCtx, os.Getenv("STATION_APP_STATE_LEGACY_REGISTRY"))
+	finishLegacy()
+	if err != nil {
+		logger.Error("app_state_legacy_configuration_invalid")
+		return 1
+	}
 	stateCtx, stopState := context.WithCancel(ctx)
 	stateDone := make(chan struct{})
 	go func() { defer close(stateDone); appStates.RunExpiry(stateCtx, logger) }()

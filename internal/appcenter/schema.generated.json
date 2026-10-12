@@ -195,6 +195,87 @@
       }
     }
   },
+  "station://contracts/appcenter-v1/legacy": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "station://contracts/appcenter-v1/legacy",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "revision",
+      "records"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": 1
+      },
+      "revision": {
+        "type": "string",
+        "pattern": "^sha256:[a-f0-9]{64}$"
+      },
+      "records": {
+        "type": "array",
+        "maxItems": 128,
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "bindingId",
+            "appId",
+            "organizationId",
+            "stationId",
+            "observationKey",
+            "workloadUID",
+            "adapterId",
+            "backendRevision",
+            "route"
+          ],
+          "properties": {
+            "bindingId": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+            },
+            "appId": {
+              "type": "string",
+              "pattern": "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$"
+            },
+            "organizationId": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "stationId": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "observationKey": {
+              "type": "string",
+              "pattern": "^obs:[a-f0-9]{64}$"
+            },
+            "workloadUID": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "adapterId": {
+              "enum": [
+                "image-iframe-v1",
+                "video-iframe-v1",
+                "blender-host-v1"
+              ]
+            },
+            "backendRevision": {
+              "type": "string",
+              "pattern": "^sha256:[a-f0-9]{64}$"
+            },
+            "route": {
+              "type": "string",
+              "maxLength": 2048,
+              "pattern": "^/market\\?"
+            }
+          }
+        }
+      }
+    }
+  },
   "station://contracts/v1/app-command": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "station://contracts/v1/app-command",

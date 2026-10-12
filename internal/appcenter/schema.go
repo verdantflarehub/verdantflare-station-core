@@ -32,7 +32,7 @@ var schemas = sync.OnceValues(func() (map[string]*jsonschema.Schema, error) {
 		}
 	}
 	result := map[string]*jsonschema.Schema{}
-	for _, name := range []string{"command-core", "command-registry"} {
+	for _, name := range []string{"command-core", "command-registry", "legacy"} {
 		s, err := c.Compile("station://contracts/appcenter-v1/" + name)
 		if err != nil {
 			return nil, err

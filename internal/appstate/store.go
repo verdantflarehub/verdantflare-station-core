@@ -133,12 +133,12 @@ func (s *Service) Snapshot(ctx context.Context, user identity.IdentityContext, i
 		return empty, err
 	}
 	memory := s.memory()
-	views, scopes, err := memory.Views(bindings)
+	observations, err := memory.snapshotViews(bindings)
 	if err != nil {
 		return empty, err
 	}
 	out.GeneratedAt = time.Now().UTC()
-	scopeToken := scopes[user.OrganizationID]
+	scopeToken := observations.revisions[user.OrganizationID]
 	if scopeToken == "" {
 		scopeToken = memory.token(0)
 	}
@@ -147,9 +147,11 @@ func (s *Service) Snapshot(ctx context.Context, user identity.IdentityContext, i
 		item := &out.Items[index]
 		view := MemoryView{Runtime: Runtime{State: "unknown", Quality: "unknown", ReasonCode: "NOT_SYNCED"}, Revision: memory.token(0)}
 		if item.InstallationID != nil {
-			if known, ok := views[*item.InstallationID]; ok {
+			if known, ok := observations.installations[*item.InstallationID]; ok {
 				view = known
 			}
+		} else if known, ok := observations.legacy[user.OrganizationID][item.AppID]; ok {
+			view = known
 		}
 		item.Runtime = view.Runtime
 		item.StateRevision += ":" + view.Revision

@@ -125,7 +125,7 @@ func (m *Memory) notificationViews(bindings []Binding, entries []catalog.Entry) 
 	if len(entries) > 1000 {
 		return nil, nil, ErrLimit
 	}
-	_, scopes, err := m.viewsLocked(bindings)
+	snapshot, err := m.snapshotLocked(bindings)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -136,7 +136,7 @@ func (m *Memory) notificationViews(bindings []Binding, entries []catalog.Entry) 
 		positions = append(positions, notificationPosition{entry.AppID, observation.State, observation.Reason})
 	}
 	sort.Slice(positions, func(i, j int) bool { return positions[i].AppID < positions[j].AppID })
-	return scopes, positions, nil
+	return snapshot.revisions, positions, nil
 }
 
 func notificationBlockers(ctx context.Context, tx pgx.Tx, station string) (map[string]int, error) {

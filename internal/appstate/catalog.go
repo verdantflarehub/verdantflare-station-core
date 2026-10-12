@@ -29,7 +29,7 @@ func (m *Memory) catalogSnapshot(organization string, entries []catalog.Entry, b
 	if !validID(organization) || len(entries) > 1000 {
 		return nil, nil, ErrLimit
 	}
-	allViews, _, err := m.viewsLocked(bindings)
+	snapshot, err := m.snapshotLocked(bindings)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -39,7 +39,7 @@ func (m *Memory) catalogSnapshot(organization string, entries []catalog.Entry, b
 		if b.OrganizationID != organization {
 			continue
 		}
-		v := allViews[b.InstallationID]
+		v := snapshot.installations[b.InstallationID]
 		views[b.InstallationID] = v
 		if v.Resource != nil {
 			locations[v.Resource.Namespace+"/"+v.Resource.Name] = v
@@ -55,6 +55,10 @@ func (m *Memory) catalogSnapshot(organization string, entries []catalog.Entry, b
 		if v, ok := locations[key]; ok && v.Resource.AppID == e.AppID {
 			obs = catalogObservation(v)
 			used[key] = true
+		} else if v, ok := snapshot.legacy[organization][e.AppID]; ok {
+			obs = catalogObservation(v)
+			// Historical observation visibility does not create ownership.
+			obs.Ownership = nil
 		}
 		modelStatus := "unknown"
 		if len(e.Models) == 0 {

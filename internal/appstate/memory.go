@@ -34,6 +34,7 @@ type Memory struct {
 	collectors    map[string]*memoryCollector
 	bindings      map[string]*memoryBinding
 	scopeRevision map[string]uint64
+	legacy        []legacyBinding
 }
 
 type memoryCollector struct {
@@ -301,7 +302,8 @@ func (s *StreamSession) Heartbeat() error {
 func (m *Memory) Views(bindings []Binding) (map[string]MemoryView, map[string]string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.viewsLocked(bindings)
+	snapshot, err := m.snapshotLocked(bindings)
+	return snapshot.installations, snapshot.revisions, err
 }
 
 func (m *Memory) viewsLocked(bindings []Binding) (map[string]MemoryView, map[string]string, error) {
