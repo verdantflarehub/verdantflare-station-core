@@ -48,3 +48,35 @@ func TestAppCenterCommandGatewayValidation(t *testing.T) {
 		t.Fatal("manage permission bypassed", w.Code)
 	}
 }
+
+func TestAppCenterOperationsGatewayValidation(t *testing.T) {
+	actor := identity.IdentityContext{Roles: []string{"admin"}, Scopes: []string{"app:read"}}
+	for _, test := range []struct {
+		name, method, path string
+		want               int
+	}{
+		{"missing-key", "GET", "/appcenter/v1/operations", 400},
+		{"short-key", "GET", "/appcenter/v1/operations?idempotency_key=short", 400},
+		{"extra-query", "GET", "/appcenter/v1/operations?idempotency_key=valid-key-123&x=1", 400},
+		{"unavailable", "GET", "/appcenter/v1/operations?idempotency_key=valid-key-123", 503},
+		{"wrong-method", "POST", "/appcenter/v1/operations?idempotency_key=valid-key-123", 400},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			r := httptest.NewRequest(test.method, test.path, nil)
+			w := httptest.NewRecorder()
+			(&Server{}).serveAppCenterOperations(w, r, context.Background(), "trace", actor)
+			if w.Code != test.want {
+				t.Fatalf("got %d, want %d", w.Code, test.want)
+			}
+		})
+	}
+	actor.Scopes = nil
+	r := httptest.NewRequest("GET", "/appcenter/v1/operations?idempotency_key=valid-key-123", nil)
+	w := httptest.NewRecorder()
+	(&Server{}).serveAppCenterOperations(w, r, context.Background(), "trace", actor)
+	if w.Code != 403 {
+		t.Fatal("read permission bypassed", w.Code)
+	}
+}
+
+

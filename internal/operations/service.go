@@ -212,6 +212,21 @@ func (s *Service) Get(ctx context.Context, u identity.IdentityContext, id string
 	return read(ctx, s.Pool, u, s.StationID, id)
 }
 
+func (s *Service) GetByIdempotencyKey(ctx context.Context, u identity.IdentityContext, key string) (Operation, error) {
+	if !slices.Contains(u.Roles, "admin") || !slices.Contains(u.Scopes, "app:read") {
+		return Operation{}, identity.Denied
+	}
+	if len(key) < 8 || len(key) > 128 {
+		return Operation{}, identity.Invalid
+	}
+	var id string
+	err := s.Pool.QueryRow(ctx, `SELECT operation_id::text FROM station.app_operations WHERE user_id=$1 AND organization_id=$2 AND station_id=$3 AND idempotency_key=$4`, u.UserID, u.OrganizationID, s.StationID, key).Scan(&id)
+	if err != nil {
+		return Operation{}, err
+	}
+	return read(ctx, s.Pool, u, s.StationID, id)
+}
+
 type querier interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }

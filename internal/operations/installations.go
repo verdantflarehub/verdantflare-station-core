@@ -67,7 +67,7 @@ func installationState(current, action, result string) string {
 		switch action {
 		case "delete":
 			return "removed"
-		case "install", "start", "restart", "adopt":
+		case "install", "start", "restart", "adopt", "stop":
 			return "installed"
 		}
 	}

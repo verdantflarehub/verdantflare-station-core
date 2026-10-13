@@ -71,13 +71,13 @@ func (s *AppCenterAdmissionSource) policies(ctx context.Context) ([]AppCenterRel
 		key := p.AppID + "@" + p.AppVersion
 		if !appCenterAppName.MatchString(p.AppID) || len(p.AppVersion) > 64 || !appCenterVersion.MatchString(p.AppVersion) ||
 			!slices.Contains([]string{"signed-package", "management-release"}, p.ReleaseKind) || !transitionName.MatchString(p.ReleaseRef) ||
-			len(p.Actions) == 0 || len(p.Actions) > 2 || seen[key] {
+			len(p.Actions) == 0 || len(p.Actions) > 4 || seen[key] {
 			return nil, ErrAppCenterRelease
 		}
 		seen[key] = true
 		actions := map[string]bool{}
 		for _, action := range p.Actions {
-			if (action != "install" && action != "start") || actions[action] {
+			if !slices.Contains([]string{"install", "start", "stop", "restart"}, action) || actions[action] {
 				return nil, ErrAppCenterRelease
 			}
 			actions[action] = true
@@ -106,7 +106,7 @@ func (s *AppCenterAdmissionSource) resolve(ctx context.Context, actor identity.I
 		if installed != nil {
 			return zero, ErrAppCenterBinding
 		}
-	} else if command.Action == "start" {
+	} else if command.Action == "start" || command.Action == "stop" || command.Action == "restart" {
 		if installed == nil || installed.StationID != actor.StationID || installed.OrganizationID != actor.OrganizationID || installed.AppID != command.AppID ||
 			installed.AppVersion != command.AppVersion || installed.State != "installed" {
 			return zero, ErrAppCenterBinding
@@ -198,8 +198,24 @@ func (s *AppCenterAdmissionSource) Read(ctx context.Context, actor identity.Iden
 		}
 	} else {
 		uid, err := uuid.Parse(observation.WorkloadUid)
-		if err != nil || uid == uuid.Nil || uid.String() != observation.WorkloadUid || observation.State != "stopped" {
+		if err != nil || uid == uuid.Nil || uid.String() != observation.WorkloadUid {
 			return zero, ErrAppCenterBinding
+		}
+		switch command.Action {
+		case "start":
+			if observation.State != "stopped" {
+				return zero, ErrAppCenterBinding
+			}
+		case "stop":
+			if observation.State != "running" {
+				return zero, ErrAppCenterBinding
+			}
+		case "restart":
+			if observation.State != "running" && observation.State != "stopped" {
+				return zero, ErrAppCenterBinding
+			}
+		default:
+			return zero, ErrAppCenterUnsupported
 		}
 	}
 	execution.WorkloadUID = observation.WorkloadUid

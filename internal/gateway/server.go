@@ -29,7 +29,7 @@ import (
 	"github.com/verdantflarehub/verdantflare-station-core/migrations"
 )
 
-const Version = "0.3.30"
+const Version = "0.3.31"
 
 var requestIDPattern = regexp.MustCompile(`^[a-zA-Z0-9._:-]{1,128}$`)
 
@@ -238,6 +238,7 @@ func (s *Server) ServeHTTP(original http.ResponseWriter, r *http.Request) {
 		"/app-states/v1":                                  "GET",
 		"/appcenter/v1/facts":                             "GET",
 		"/appcenter/v1/commands":                          "POST",
+		"/appcenter/v1/operations":                        "GET",
 		"/internal/v1/app-installations/authorize":        "POST",
 		"/internal/v1/app-installations/authorize-worker": "POST",
 		"/preinstalled/commands":                          "POST",
@@ -416,6 +417,10 @@ func (s *Server) ServeHTTP(original http.ResponseWriter, r *http.Request) {
 	}
 	if route == "/appcenter/v1/commands" {
 		s.serveAppCenterCommand(w, r, ctx, requestID, user)
+		return
+	}
+	if route == "/appcenter/v1/operations" {
+		s.serveAppCenterOperations(w, r, ctx, requestID, user)
 		return
 	}
 	if strings.HasPrefix(route, "/preinstalled/") {

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"slices"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/appcenter"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/identity"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/operations"
@@ -54,3 +55,35 @@ func (s *Server) serveAppCenterCommand(w http.ResponseWriter, r *http.Request, c
 	}
 	reply(w, http.StatusAccepted, op)
 }
+
+func (s *Server) serveAppCenterOperations(w http.ResponseWriter, r *http.Request, ctx context.Context, requestID string, actor identity.IdentityContext) {
+	w.Header().Set("Cache-Control", "no-store")
+	if !slices.Contains(actor.Roles, "admin") || !slices.Contains(actor.Scopes, "app:read") {
+		failure(w, requestID, identity.Denied)
+		return
+	}
+	if r.Method != http.MethodGet || r.URL.RawPath != "" {
+		failure(w, requestID, identity.Invalid)
+		return
+	}
+	key := r.URL.Query().Get("idempotency_key")
+	if key == "" || len(key) < 8 || len(key) > 128 || len(r.URL.Query()) != 1 {
+		failure(w, requestID, identity.Invalid)
+		return
+	}
+	if s.Operations == nil || s.Operations.Pool == nil {
+		reply(w, 503, ErrorResponse{"SERVICE_UNAVAILABLE", "Operation service unavailable", requestID})
+		return
+	}
+	op, err := s.Operations.GetByIdempotencyKey(ctx, actor, key)
+	if errors.Is(err, pgx.ErrNoRows) {
+		reply(w, 404, ErrorResponse{"NOT_FOUND", "Operation not found", requestID})
+		return
+	}
+	if err != nil {
+		failure(w, requestID, err)
+		return
+	}
+	reply(w, http.StatusOK, op)
+}
+
