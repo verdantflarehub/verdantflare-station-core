@@ -12,10 +12,14 @@ import (
 )
 
 func TestAppCenterCandidatesUseLocalEvidence(t *testing.T) {
-	for _, variant := range []string{"start", "install", "runtime-offline", "template-mismatch", "uid-mismatch", "missing-catalog", "stale", "foreign", "blocking", "policy-withdrawn", "runtime-unconfigured"} {
+	for _, variant := range []string{"start", "stop", "restart", "degraded-stop", "install", "runtime-offline", "template-mismatch", "uid-mismatch", "missing-catalog", "stale", "foreign", "blocking", "policy-withdrawn", "runtime-unconfigured"} {
 		t.Run(variant, func(t *testing.T) {
 			s, actor, installed, policy, runtime := admissionFixture(t)
 			now := time.Now()
+			if variant == "stop" || variant == "restart" || variant == "degraded-stop" {
+				policy.Actions = []string{"start", "install", "stop", "restart"}
+				writeCommandPolicies(t, s, true, []AppCenterReleasePolicy{policy})
+			}
 			command := admissionCommand(actor, installed, "start")
 			execution, err := s.resolve(context.Background(), actor, command, &installed)
 			if err != nil {
@@ -29,6 +33,15 @@ func TestAppCenterCandidatesUseLocalEvidence(t *testing.T) {
 			want := false
 			switch variant {
 			case "start":
+				want = true
+			case "stop":
+				kind, fact.Service.State = "stop", "ready"
+				want = true
+			case "restart":
+				kind, fact.Service.State = "restart", "ready"
+				want = true
+			case "degraded-stop":
+				kind, fact.Service.State = "stop", "degraded"
 				want = true
 			case "install":
 				kind, fact.Origin, fact.Installation, fact.Service.State, fact.Service.WorkloadUID = "install", "catalog", nil, "absent", nil

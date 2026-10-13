@@ -52,7 +52,7 @@ func (s *AppCenterAdmissionSource) projectCandidate(ctx context.Context, actor i
 		installation = &Installation{InstallationID: v.InstallationID, Revision: v.Revision, AppID: fact.AppID, AppVersion: v.AppVersion, State: v.State, StationID: actor.StationID, OrganizationID: actor.OrganizationID}
 		if fact.Service.State == "stopped" {
 			kinds = []string{"start"}
-		} else if fact.Service.State == "running" {
+		} else if fact.Service.State == "ready" || fact.Service.State == "degraded" || fact.Service.State == "running" || fact.Service.State == "starting" {
 			kinds = []string{"stop", "restart"}
 		}
 	} else if fact.Origin == "catalog" && fact.Installation == nil && fact.Catalog != nil && fact.Service.State == "absent" {
