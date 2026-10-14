@@ -62,7 +62,31 @@ func (s *Server) resourcesWorkspaces(w http.ResponseWriter, r *http.Request, ctx
 	reply(w, 200, map[string]any{"workspaces": payload.Workspaces, "request_id": requestID})
 }
 
+func (s *Server) internalResourcesWorkspaces(w http.ResponseWriter, r *http.Request, ctx context.Context, requestID string) {
+	user, org, ok := s.delegatedApp(w, r, requestID, "resources")
+	if !ok {
+		return
+	}
+	if err := s.AppAccess.manager(ctx, user, org, func(context.Context) error { return nil }); err != nil {
+		failure(w, requestID, err)
+		return
+	}
+	s.resourcesWorkspaces(w, r, ctx, requestID, identity.IdentityContext{UserID: user, OrganizationID: org})
+}
+
+func (s *Server) internalResourcesReleaseWorkspace(w http.ResponseWriter, r *http.Request, requestID string) {
+	user, org, ok := s.delegatedApp(w, r, requestID, "resources")
+	if !ok {
+		return
+	}
+	s.resourcesReleaseWorkspaceWithManager(w, r, requestID, user, org, s.AppAccess.manager)
+}
+
 func (s *Server) resourcesReleaseWorkspace(w http.ResponseWriter, r *http.Request, requestID string, user identity.IdentityContext) {
+	s.resourcesReleaseWorkspaceWithManager(w, r, requestID, user.UserID, user.OrganizationID, s.Identity.WithManager)
+}
+
+func (s *Server) resourcesReleaseWorkspaceWithManager(w http.ResponseWriter, r *http.Request, requestID, userID, orgID string, withManager func(context.Context, string, string, func(context.Context) error) error) {
 	if r.URL.RawQuery != "" || r.URL.RawPath != "" || r.Header.Get("Content-Encoding") != "" {
 		failure(w, requestID, identity.Invalid)
 		return
@@ -88,11 +112,11 @@ func (s *Server) resourcesReleaseWorkspace(w http.ResponseWriter, r *http.Reques
 
 	var status int
 	var raw []byte
-	err := s.Identity.WithManager(ctx, user.UserID, user.OrganizationID, func(ctx context.Context) error {
+	err := withManager(ctx, userID, orgID, func(ctx context.Context) error {
 		body, _ := json.Marshal(runtimeWorkspaceReleaseRequest{
 			StationID:      s.Identity.StationID,
-			OrganizationID: user.OrganizationID,
-			UserID:         user.UserID,
+			OrganizationID: orgID,
+			UserID:         userID,
 			IdempotencyKey: in.IdempotencyKey,
 			Namespace:      in.Namespace,
 			PVCName:        in.PVCName,
@@ -157,3 +181,4 @@ func (s *Server) resourcesReleaseWorkspace(w http.ResponseWriter, r *http.Reques
 	}
 	reply(w, status, ErrorResponse{errResp.Code, msg, requestID})
 }
+

@@ -29,7 +29,8 @@ import (
 	"github.com/verdantflarehub/verdantflare-station-core/migrations"
 )
 
-const Version = "0.3.33"
+const Version = "0.3.36"
+
 
 var requestIDPattern = regexp.MustCompile(`^[a-zA-Z0-9._:-]{1,128}$`)
 
@@ -244,6 +245,8 @@ func (s *Server) ServeHTTP(original http.ResponseWriter, r *http.Request) {
 		"/preinstalled/commands":                          "POST",
 		"/internal/v1/app-access":                         "POST",
 		"/internal/v1/resources/snapshot":                 "GET",
+		"/internal/v1/resources/workspaces":               "GET",
+		"/internal/v1/resources/workspaces/release":       "POST",
 		"/internal/v1/blender/create":                     "POST",
 		"/internal/v1/blender/start":                      "POST",
 		"/internal/v1/blender/stop":                       "POST",
@@ -293,6 +296,12 @@ func (s *Server) ServeHTTP(original http.ResponseWriter, r *http.Request) {
 		return
 	case "/internal/v1/resources/snapshot":
 		s.resourcesSnapshot(w, r, requestID)
+		return
+	case "/internal/v1/resources/workspaces":
+		s.internalResourcesWorkspaces(w, r, ctx, requestID)
+		return
+	case "/internal/v1/resources/workspaces/release":
+		s.internalResourcesReleaseWorkspace(w, r, requestID)
 		return
 	case "/internal/v1/blender/options":
 		s.blenderOptions(w, r, requestID)
