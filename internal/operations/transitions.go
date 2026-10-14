@@ -40,6 +40,8 @@ type TransitionSnapshot struct {
 	DataContract             string   `json:"data_contract"`
 	DefaultWorkerVersion     string   `json:"default_worker_version"`
 	CompatibleWorkerVersions []string `json:"compatible_worker_versions"`
+	ReleaseKind              string   `json:"release_kind,omitempty"`
+	AppImageDigest           string   `json:"app_image_digest,omitempty"`
 }
 
 type Transition struct {
@@ -74,9 +76,13 @@ func (c TransitionCommand) valid() bool {
 }
 func (s TransitionSnapshot) valid() bool {
 	if !transitionName.MatchString(s.AppID) || !validTransitionVersion(s.AppVersion) || !transitionName.MatchString(s.ReleaseRef) ||
-		!transitionDigest.MatchString(s.ReleaseDigest) || !transitionDigest.MatchString(s.ManifestDigest) || !transitionDigest.MatchString(s.TemplateDigest) || !transitionDigest.MatchString(s.DashboardDigest) ||
-		!transitionName.MatchString(s.DataContract) || len(s.CompatibleWorkerVersions) == 0 || len(s.CompatibleWorkerVersions) > 128 ||
-		!slices.Contains(s.CompatibleWorkerVersions, s.DefaultWorkerVersion) {
+		!transitionDigest.MatchString(s.ReleaseDigest) || !transitionDigest.MatchString(s.ManifestDigest) || !transitionDigest.MatchString(s.TemplateDigest) || !transitionDigest.MatchString(s.DashboardDigest) {
+		return false
+	}
+	if s.ReleaseKind == "dashboard-release" {
+		return s.DataContract == "" && s.DefaultWorkerVersion == "" && s.CompatibleWorkerVersions != nil && len(s.CompatibleWorkerVersions) == 0 && transitionDigest.MatchString(s.AppImageDigest)
+	}
+	if s.ReleaseKind != "" || s.AppImageDigest != "" || !transitionName.MatchString(s.DataContract) || len(s.CompatibleWorkerVersions) == 0 || len(s.CompatibleWorkerVersions) > 128 || !slices.Contains(s.CompatibleWorkerVersions, s.DefaultWorkerVersion) {
 		return false
 	}
 	seen := map[string]bool{}
@@ -109,7 +115,7 @@ func compareTransitionVersions(a, b string) int {
 func compatibleTransition(c TransitionCommand, installed Installation, source, target TransitionSnapshot) bool {
 	if !source.valid() || !target.valid() || source.AppID != installed.AppID || target.AppID != installed.AppID ||
 		source.AppVersion != installed.AppVersion || source.AppVersion != c.SourceVersion || target.ReleaseRef != c.TargetReleaseRef ||
-		source.DataContract != target.DataContract || source.ReleaseRef == target.ReleaseRef {
+		source.DataContract != target.DataContract || source.ReleaseKind != target.ReleaseKind || source.ReleaseRef == target.ReleaseRef {
 		return false
 	}
 	direction := compareTransitionVersions(target.AppVersion, source.AppVersion)

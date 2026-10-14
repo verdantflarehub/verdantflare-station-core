@@ -135,6 +135,18 @@ func (s *Service) AuthorizeWorkerVersion(ctx context.Context, installed Installa
 	if installed.State != "installed" || installed.StationID != s.StationID || installed.Revision < 1 {
 		return identity.Denied
 	}
+	if s.AppCenterAdmissionSource != nil && s.AppCenterAdmissionSource.Dashboard != nil && s.AppCenterAdmissionSource.Dashboard.Path != "" {
+		root, entries, err := s.AppCenterAdmissionSource.Dashboard.load(ctx)
+		if err != nil {
+			return ErrTransitionRelease
+		}
+		root.Close()
+		for _, entry := range entries {
+			if entry.AppID == installed.AppID {
+				return identity.Denied
+			}
+		}
+	}
 	if installed.AppVersion == version {
 		return nil
 	}

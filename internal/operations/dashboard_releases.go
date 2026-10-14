@@ -15,7 +15,8 @@ import (
 )
 
 // DashboardReleases is an operator-controlled source for applications without
-// workers. It grants no transition, stop/restart or worker compatibility rights.
+// workers. Lifecycle admission and transition admission remain separate; this
+// material reader never grants worker compatibility rights.
 type DashboardReleases struct{ Path string }
 
 type dashboardReleaseEntry struct {
@@ -29,44 +30,52 @@ type dashboardReleaseEntry struct {
 	TemplateDigest  string `json:"templateDigest"`
 }
 
-func (s *DashboardReleases) Resolve(ctx context.Context, appID, version, ref string) (dashboardReleaseEntry, error) {
-	var zero dashboardReleaseEntry
+func (s *DashboardReleases) load(ctx context.Context) (*os.Root, []dashboardReleaseEntry, error) {
 	if s == nil || s.Path == "" || ctx.Err() != nil {
-		return zero, ErrAppCenterRelease
+		return nil, nil, ErrAppCenterRelease
 	}
 	root, err := os.OpenRoot(filepath.Dir(s.Path))
 	if err != nil {
-		return zero, ErrAppCenterRelease
+		return nil, nil, ErrAppCenterRelease
 	}
-	defer root.Close()
+	fail := func() (*os.Root, []dashboardReleaseEntry, error) { root.Close(); return nil, nil, ErrAppCenterRelease }
 	raw, err := materialRead(ctx, root, filepath.Base(s.Path), 2<<20)
 	if err != nil {
-		return zero, ErrAppCenterRelease
+		return fail()
 	}
 	var registry struct {
 		SchemaVersion int                     `json:"schemaVersion"`
 		Releases      []dashboardReleaseEntry `json:"releases"`
 	}
 	if appcenter.Decode(bytes.NewReader(raw), "dashboard-release-registry", 2<<20, &registry) != nil {
-		return zero, ErrAppCenterRelease
+		return fail()
 	}
 	versions, refs := map[string]bool{}, map[string]bool{}
-	var selected *dashboardReleaseEntry
-	for i := range registry.Releases {
-		e := &registry.Releases[i]
+	for _, e := range registry.Releases {
 		key := e.AppID + "@" + e.AppVersion
 		if versions[key] || refs[e.ReleaseRef] || !materialPath(e.ReleaseIndexRef) || !materialPath(e.ManifestRef) || e.ReleaseIndexRef == e.ManifestRef {
-			return zero, ErrAppCenterRelease
+			return fail()
 		}
 		versions[key], refs[e.ReleaseRef] = true, true
+	}
+	return root, registry.Releases, nil
+}
+
+func (s *DashboardReleases) Resolve(ctx context.Context, appID, version, ref string) (dashboardReleaseEntry, error) {
+	root, entries, err := s.load(ctx)
+	if err != nil {
+		return dashboardReleaseEntry{}, err
+	}
+	defer root.Close()
+	for _, e := range entries {
 		if e.AppID == appID && e.AppVersion == version && e.ReleaseRef == ref {
-			selected = e
+			if verifyDashboardRelease(ctx, root, e) != nil {
+				return dashboardReleaseEntry{}, ErrAppCenterRelease
+			}
+			return e, nil
 		}
 	}
-	if selected == nil || verifyDashboardRelease(ctx, root, *selected) != nil {
-		return zero, ErrAppCenterRelease
-	}
-	return *selected, nil
+	return dashboardReleaseEntry{}, ErrAppCenterRelease
 }
 
 func verifyDashboardRelease(ctx context.Context, root *os.Root, e dashboardReleaseEntry) error {

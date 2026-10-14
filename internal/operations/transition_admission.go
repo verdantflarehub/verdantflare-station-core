@@ -17,7 +17,7 @@ func (s *Service) ConfigureTransitionAdmission(value string, runtime *HTTPTransi
 		return nil
 	}
 	if value != "true" || runtime == nil || runtime.client == nil || runtime.endpoint == "" || runtime.token == "" ||
-		s.TransitionReleases == nil || s.TransitionReleases.Path == "" {
+		!s.hasTransitionReleases() {
 		return errors.New("invalid transition admission configuration")
 	}
 	s.transitionAdmissionEnabled = true
@@ -32,6 +32,11 @@ func (s *Service) SubmitManagedTransition(ctx context.Context, actor identity.Id
 		if !s.transitionAdmissionEnabled {
 			return TransitionSnapshot{}, TransitionSnapshot{}, ErrTransitionAdmissionDisabled
 		}
-		return s.TransitionReleases.Read(ctx, actor, installed, ref)
+		return s.transitionReleaseReader(ctx, actor, installed, ref)
 	})
+}
+
+func (s *Service) hasTransitionReleases() bool {
+	return (s.TransitionReleases != nil && s.TransitionReleases.Path != "") ||
+		(s.AppCenterAdmissionSource != nil && s.AppCenterAdmissionSource.Path != "" && s.AppCenterAdmissionSource.Dashboard != nil && s.AppCenterAdmissionSource.Dashboard.Path != "")
 }
