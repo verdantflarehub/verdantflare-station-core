@@ -172,7 +172,8 @@ func run() int {
 		defer func() { stopWorker(); <-workerDone }()
 	}
 	if path := os.Getenv("STATION_APPCENTER_COMMAND_REGISTRY"); path != "" {
-		ops.AppCenterAdmissionSource = &operations.AppCenterAdmissionSource{Path: path, Signed: ops.Releases, Management: ops.TransitionReleases, Runtime: ops.AppCenterRuntime}
+		ops.AppCenterAdmissionSource = &operations.AppCenterAdmissionSource{Path: path, Signed: ops.Releases, Management: ops.TransitionReleases,
+			Dashboard: &operations.DashboardReleases{Path: os.Getenv("STATION_APPCENTER_DASHBOARD_RELEASE_REGISTRY")}, Runtime: ops.AppCenterRuntime}
 	}
 	transitionRuntime, err := operations.NewHTTPTransitionRuntime(os.Getenv("STATION_APP_TRANSITION_RUNTIME_ORIGIN"), os.Getenv("STATION_APP_TRANSITION_CONTROL_TOKEN"))
 	if err != nil {

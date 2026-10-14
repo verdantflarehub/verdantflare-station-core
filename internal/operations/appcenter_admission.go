@@ -37,6 +37,7 @@ type AppCenterAdmissionSource struct {
 	Path       string
 	Signed     *releasebinding.Source
 	Management *TransitionReleases
+	Dashboard  *DashboardReleases
 	Runtime    pb.AppCenterRuntimeClient
 }
 
@@ -70,13 +71,16 @@ func (s *AppCenterAdmissionSource) policies(ctx context.Context) ([]AppCenterRel
 	for _, p := range cfg.Releases {
 		key := p.AppID + "@" + p.AppVersion
 		if !appCenterAppName.MatchString(p.AppID) || len(p.AppVersion) > 64 || !appCenterVersion.MatchString(p.AppVersion) ||
-			!slices.Contains([]string{"signed-package", "management-release"}, p.ReleaseKind) || !transitionName.MatchString(p.ReleaseRef) ||
+			!slices.Contains([]string{"signed-package", "management-release", "dashboard-release"}, p.ReleaseKind) || !transitionName.MatchString(p.ReleaseRef) ||
 			len(p.Actions) == 0 || len(p.Actions) > 4 || seen[key] {
 			return nil, ErrAppCenterRelease
 		}
 		seen[key] = true
 		actions := map[string]bool{}
 		for _, action := range p.Actions {
+			if p.ReleaseKind == "dashboard-release" && action != "install" && action != "start" {
+				return nil, ErrAppCenterRelease
+			}
 			if !slices.Contains([]string{"install", "start", "stop", "restart"}, action) || actions[action] {
 				return nil, ErrAppCenterRelease
 			}
@@ -150,6 +154,16 @@ func (s *AppCenterAdmissionSource) resolve(ctx context.Context, actor identity.I
 			return zero, ErrAppCenterRelease
 		}
 		execution.ReleaseDigest, execution.TemplateDigest = snapshot.ReleaseDigest, snapshot.TemplateDigest
+	case "dashboard-release":
+		binding, err := s.Dashboard.Resolve(ctx, policy.AppID, policy.AppVersion, policy.ReleaseRef)
+		if err != nil {
+			return zero, ErrAppCenterRelease
+		}
+		execution.ReleaseDigest = appcenter.Digest(struct {
+			Protocol string
+			Binding  dashboardReleaseEntry
+		}{"studio.appcenter.dashboard-release.v1", binding})
+		execution.TemplateDigest = binding.TemplateDigest
 	}
 	execution.PolicyRevision = appcenter.Digest(struct {
 		Protocol          string

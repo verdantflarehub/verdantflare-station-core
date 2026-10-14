@@ -171,7 +171,8 @@
             "releaseKind": {
               "enum": [
                 "signed-package",
-                "management-release"
+                "management-release",
+                "dashboard-release"
               ]
             },
             "releaseRef": {
@@ -192,7 +193,30 @@
                 ]
               }
             }
-          }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "releaseKind": {
+                    "const": "dashboard-release"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "actions": {
+                    "items": {
+                      "enum": [
+                        "install",
+                        "start"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          ]
         }
       }
     }
@@ -1303,6 +1327,79 @@
           "preinstalled"
         ],
         "additionalProperties": false
+      }
+    }
+  },
+  "station://contracts/appcenter-v1/dashboard-release-registry": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "station://contracts/appcenter-v1/dashboard-release-registry",
+    "title": "dashboard-release-registry",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "releases"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": 1
+      },
+      "releases": {
+        "type": "array",
+        "maxItems": 128,
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "appId",
+            "appVersion",
+            "releaseRef",
+            "releaseIndexRef",
+            "manifestRef",
+            "releaseDigest",
+            "manifestDigest",
+            "templateDigest"
+          ],
+          "properties": {
+            "appId": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"
+            },
+            "appVersion": {
+              "type": "string",
+              "maxLength": 64,
+              "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+            },
+            "releaseRef": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9._-]{0,62}$"
+            },
+            "releaseIndexRef": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\\\:]+$"
+            },
+            "manifestRef": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\\\:]+$"
+            },
+            "releaseDigest": {
+              "type": "string",
+              "pattern": "^sha256:[a-f0-9]{64}$"
+            },
+            "manifestDigest": {
+              "type": "string",
+              "pattern": "^sha256:[a-f0-9]{64}$"
+            },
+            "templateDigest": {
+              "type": "string",
+              "pattern": "^sha256:[a-f0-9]{64}$"
+            }
+          }
+        }
       }
     }
   },
