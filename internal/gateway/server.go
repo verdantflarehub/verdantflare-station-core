@@ -29,7 +29,7 @@ import (
 	"github.com/verdantflarehub/verdantflare-station-core/migrations"
 )
 
-const Version = "0.3.32"
+const Version = "0.3.33"
 
 var requestIDPattern = regexp.MustCompile(`^[a-zA-Z0-9._:-]{1,128}$`)
 
@@ -250,8 +250,8 @@ func (s *Server) ServeHTTP(original http.ResponseWriter, r *http.Request) {
 		"/internal/v1/blender/destroy":                    "POST",
 		"/internal/v1/blender/access":                     "POST",
 		"/internal/v1/blender/options":                    "POST",
-		"/app-commands":                                   "POST", "/healthz": "GET", "/readyz": "GET", "/identity/bootstrap": "POST", "/identity/login": "POST", "/identity/refresh": "POST", "/identity/logout": "POST", "/identity/me": "GET", "/identity/scopes": "GET", "/station/health": "GET",
-		"/api/v1/resources/gpu": "GET", "/api/v1/resources/node": "GET", "/api/v1/resources/summary": "GET", "/api/v1/resources/workloads": "GET"}
+		"/app-commands": "POST", "/healthz": "GET", "/readyz": "GET", "/identity/bootstrap": "POST", "/identity/login": "POST", "/identity/refresh": "POST", "/identity/logout": "POST", "/identity/me": "GET", "/identity/scopes": "GET", "/station/health": "GET",
+		"/api/v1/resources/gpu": "GET", "/api/v1/resources/node": "GET", "/api/v1/resources/summary": "GET", "/api/v1/resources/workloads": "GET", "/api/v1/resources/workspaces": "GET", "/api/v1/resources/workspaces/release": "POST"}
 	if strings.HasPrefix(r.URL.Path, "/app-operations/") || r.URL.Path == "/catalog/apps" || strings.HasPrefix(r.URL.Path, "/catalog/apps/") {
 		routes[r.URL.Path] = "GET"
 	}
@@ -454,6 +454,14 @@ func (s *Server) ServeHTTP(original http.ResponseWriter, r *http.Request) {
 			return
 		}
 		reply(w, 200, op)
+		return
+	}
+	if route == "/api/v1/resources/workspaces" {
+		s.resourcesWorkspaces(w, r, ctx, requestID, user)
+		return
+	}
+	if route == "/api/v1/resources/workspaces/release" {
+		s.resourcesReleaseWorkspace(w, r, requestID, user)
 		return
 	}
 	if strings.HasPrefix(route, "/api/v1/resources/") {
