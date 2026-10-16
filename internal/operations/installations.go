@@ -28,11 +28,12 @@ type Installation struct {
 
 // reserveInstallation runs under Submit's Station/App advisory lock and transaction.
 // Idempotent operation replay is resolved before this function is called.
-func reserveInstallation(ctx context.Context, tx pgx.Tx, user identity.IdentityContext, c Command) (string, error) {
-	var id, org, installedVersion string
-	err := tx.QueryRow(ctx, `SELECT installation_id::text,organization_id::text,app_version FROM station.app_installations WHERE station_id=$1 AND app_id=$2 AND state <> 'removed' FOR UPDATE`, c.StationID, c.AppID).Scan(&id, &org, &installedVersion)
+func reserveInstallation(ctx context.Context, tx pgx.Tx, user identity.IdentityContext, c Command, trustedAdoption bool) (string, error) {
+	var id, org, installedVersion, state string
+	var bound bool
+	err := tx.QueryRow(ctx, `SELECT installation_id::text,organization_id::text,app_version,state,EXISTS(SELECT 1 FROM station.preinstalled_installation_bindings b WHERE b.installation_id=station.app_installations.installation_id) FROM station.app_installations WHERE station_id=$1 AND app_id=$2 AND state <> 'removed' FOR UPDATE`, c.StationID, c.AppID).Scan(&id, &org, &installedVersion, &state, &bound)
 	if err == nil {
-		if org != user.OrganizationID || installedVersion != c.AppVersion {
+		if org != user.OrganizationID || (installedVersion != c.AppVersion && !legacyVersionAdoption(trustedAdoption, c.Action, state, bound)) {
 			return "", identity.Conflict
 		}
 		return id, nil
@@ -46,6 +47,10 @@ func reserveInstallation(ctx context.Context, tx pgx.Tx, user identity.IdentityC
 	id = uuid.Must(uuid.NewV7()).String()
 	_, err = tx.Exec(ctx, `INSERT INTO station.app_installations(installation_id,created_by,organization_id,station_id,app_id,app_version,state) VALUES($1,$2,$3,$4,$5,$6,'pending')`, id, user.UserID, user.OrganizationID, c.StationID, c.AppID, c.AppVersion)
 	return id, err
+}
+
+func legacyVersionAdoption(trusted bool, action, state string, bound bool) bool {
+	return trusted && action == "adopt" && state == "installed" && !bound
 }
 
 func bindInstallationOperation(ctx context.Context, tx pgx.Tx, installationID, operationID string) error {
@@ -80,13 +85,30 @@ func installationState(current, action, result string) string {
 // recordInstallationProgress shares the transaction that records Runtime progress.
 // Legacy operations with no bound identity are intentionally not backfilled.
 func recordInstallationProgress(ctx context.Context, tx pgx.Tx, operationID, action, result string) error {
-	var id, state string
-	err := tx.QueryRow(ctx, `SELECT i.installation_id::text,i.state FROM station.app_installations i JOIN station.app_operations o ON o.installation_id=i.installation_id WHERE o.operation_id=$1 AND i.last_operation_id=o.operation_id FOR UPDATE OF i`, operationID).Scan(&id, &state)
+	var id, state, installedVersion, observedVersion string
+	var signedAdoption bool
+	err := tx.QueryRow(ctx, `SELECT i.installation_id::text,i.state,i.app_version,o.app_version,EXISTS(SELECT 1 FROM station.preinstalled_operation_bindings b WHERE b.operation_id=o.operation_id) FROM station.app_installations i JOIN station.app_operations o ON o.installation_id=i.installation_id WHERE o.operation_id=$1 AND i.last_operation_id=o.operation_id FOR UPDATE OF i`, operationID).Scan(&id, &state, &installedVersion, &observedVersion, &signedAdoption)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
 		return err
+	}
+	if installedVersion != observedVersion && result == "succeeded" {
+		if !legacyVersionAdoption(signedAdoption, action, state, false) {
+			return identity.Conflict
+		}
+		// The operation was admitted against the inventory revision and Runtime
+		// verified the original workload. Bind only now, in this result transaction.
+		bound, e := tx.Exec(ctx, `INSERT INTO station.preinstalled_installation_bindings(installation_id,binding) SELECT $2,binding FROM station.preinstalled_operation_bindings WHERE operation_id=$1 ON CONFLICT(installation_id) DO NOTHING`, operationID, id)
+		if e != nil {
+			return e
+		}
+		if bound.RowsAffected() != 1 {
+			return identity.Conflict
+		}
+		_, e = tx.Exec(ctx, `UPDATE station.app_installations SET app_version=$2,revision=revision+1,updated_at=now() WHERE installation_id=$1`, id, observedVersion)
+		return e
 	}
 	next := installationState(state, action, result)
 	if next == state {

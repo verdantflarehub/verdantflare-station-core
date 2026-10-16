@@ -341,6 +341,72 @@ func TestPreinstalledDatabaseLegacyAdoptionNeedsSuccessfulBoundOperation(t *test
 	}
 }
 
+func TestPreinstalledDatabaseLegacyVersionAdoptionDefersBinding(t *testing.T) {
+	f := preinstalledDatabaseFixture(t)
+	ctx := context.Background()
+	legacy := f.command(t, "legacy-version-install").Command
+	if _, err := f.service.Submit(ctx, f.actor, legacy); err != nil {
+		t.Fatal(err)
+	}
+	if found, err := f.service.DispatchOne(ctx, installationRuntime{"succeeded"}); !found || err != nil {
+		t.Fatal(found, err)
+	}
+	id := f.inventory(t).History[0].Installation.InstallationID
+	// Reproduce an old unbound installation whose durable version predates its workload.
+	if _, err := f.service.Pool.Exec(ctx, `UPDATE station.app_installations SET app_version='0.1.0' WHERE installation_id=$1`, id); err != nil {
+		t.Fatal(err)
+	}
+	uid := uuid.NewString()
+	if err := f.stream.Upsert(appstate.ResourceObservation{Namespace: "test", Name: "test-app", UID: uid, ResourceVersion: "1", Generation: 1, ObservedGeneration: 1, Desired: 1, Replicas: 1, Ready: 1, Updated: 1, Available: 1, Health: "not_checked", Metadata: &appstate.ResourceMetadata{Images: []appstate.ResourceImage{{Component: "server", Image: "example.invalid/test:1.0.0"}}, ImagesComplete: true}}); err != nil {
+		t.Fatal(err)
+	}
+	check := func(version string, bound bool) {
+		t.Helper()
+		item := f.inventory(t).History[0]
+		if item.Installation.InstallationID != id || item.Installation.AppVersion != version || item.Installation.State != "installed" || (item.Release != nil) != bound {
+			t.Fatal("premature or incorrect installation mutation", item)
+		}
+	}
+	command := f.command(t, "legacy-version-adopt")
+	command.Command.Action, command.Command.ExpectedWorkloadUID = "adopt", uid
+	if _, err := f.service.Submit(ctx, f.actor, command.Command); !errors.Is(err, identity.Conflict) {
+		t.Fatal("unsigned adoption accepted", err)
+	}
+	first, err := f.service.SubmitPreinstalled(ctx, f.actor, command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check("0.1.0", false)
+	if found, err := f.service.DispatchOne(ctx, preinstalledRuntimeResult{binding: f.binding, action: "adopt", uid: uid, unavailable: true}); !found || status.Code(err) != codes.Unavailable {
+		t.Fatal(found, err)
+	}
+	check("0.1.0", false)
+	f.dispatch(t, "failed", "adopt", uid)
+	check("0.1.0", false)
+	replay, err := f.service.SubmitPreinstalled(ctx, f.actor, command)
+	if err != nil || replay.OperationID != first.OperationID {
+		t.Fatal("failed replay duplicated operation", err)
+	}
+	command = f.command(t, "legacy-version-adopt-retry")
+	command.Command.Action, command.Command.ExpectedWorkloadUID = "adopt", uid
+	accepted, err := f.service.SubmitPreinstalled(ctx, f.actor, command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check("0.1.0", false)
+	f.dispatch(t, "succeeded", "adopt", uid)
+	check("1.0.0", true)
+	if !f.inventory(t).History[0].Confirmed {
+		t.Fatal("successful adoption not confirmed")
+	}
+	counts := f.counts(t)
+	replay, err = f.service.SubmitPreinstalled(ctx, f.actor, command)
+	if err != nil || replay.OperationID != accepted.OperationID || f.counts(t) != counts {
+		t.Fatal("successful replay changed binding", err)
+	}
+	check("1.0.0", true)
+}
+
 func TestPreinstalledDatabaseMemoryInventoryAndDurableRevision(t *testing.T) {
 	f := preinstalledDatabaseFixture(t)
 	ctx := context.Background()

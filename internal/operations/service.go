@@ -159,7 +159,7 @@ func (s *Service) submit(ctx context.Context, u identity.IdentityContext, c Comm
 	if busy {
 		return o, identity.Conflict
 	}
-	installationID, e := reserveInstallation(ctx, tx, u, c)
+	installationID, e := reserveInstallation(ctx, tx, u, c, preinstalled != nil && c.Action == "adopt")
 	if e != nil {
 		return o, e
 	}

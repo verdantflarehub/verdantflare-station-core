@@ -173,6 +173,15 @@ func bindPreinstalled(ctx context.Context, tx pgx.Tx, operation, installation st
 	if _, err = tx.Exec(ctx, `INSERT INTO station.preinstalled_operation_bindings(operation_id,binding) VALUES($1,$2)`, operation, raw); err != nil {
 		return err
 	}
+	var installedVersion string
+	if err = tx.QueryRow(ctx, `SELECT app_version FROM station.app_installations WHERE installation_id=$1`, installation).Scan(&installedVersion); err != nil {
+		return err
+	}
+	if installedVersion != binding.AppVersion {
+		// Signed adoption of an unbound legacy installation was checked during
+		// reservation. Keep its old version and binding until Runtime succeeds.
+		return nil
+	}
 	result, err := tx.Exec(ctx, `INSERT INTO station.preinstalled_installation_bindings(installation_id,binding) VALUES($1,$2) ON CONFLICT(installation_id) DO UPDATE SET binding=EXCLUDED.binding WHERE station.preinstalled_installation_bindings.binding=EXCLUDED.binding`, installation, raw)
 	if err != nil {
 		return err
