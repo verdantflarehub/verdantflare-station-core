@@ -42,7 +42,7 @@ func reserveInstallation(ctx context.Context, tx pgx.Tx, user identity.IdentityC
 				return "", err
 			}
 			var prior releasebinding.Binding
-			allowed = json.Unmarshal(raw, &prior) == nil && prior.AppVersion == installedVersion && videoSourceRecovery(prior, preinstalled.Release, c.Action, state)
+			allowed = json.Unmarshal(raw, &prior) == nil && videoInstalledSourceRecovery(ctx, tx, id, installedVersion, prior, preinstalled.Release, c.Action, state)
 		}
 		if org != user.OrganizationID || (installedVersion != c.AppVersion && !allowed) {
 			return "", identity.Conflict
@@ -118,7 +118,7 @@ func recordInstallationProgress(ctx context.Context, tx pgx.Tx, operationID, act
 		}
 		if len(priorRaw) > 0 {
 			var prior, next releasebinding.Binding
-			if json.Unmarshal(priorRaw, &prior) != nil || json.Unmarshal(nextRaw, &next) != nil || prior.AppVersion != installedVersion || next.AppVersion != observedVersion || !videoSourceRecovery(prior, next, action, state) {
+			if json.Unmarshal(priorRaw, &prior) != nil || json.Unmarshal(nextRaw, &next) != nil || next.AppVersion != observedVersion || !videoInstalledSourceRecovery(ctx, tx, id, installedVersion, prior, next, action, state) {
 				return identity.Conflict
 			}
 			updated, err := tx.Exec(ctx, `UPDATE station.preinstalled_installation_bindings SET binding=$3 WHERE installation_id=$1 AND binding=$2`, id, priorRaw, nextRaw)

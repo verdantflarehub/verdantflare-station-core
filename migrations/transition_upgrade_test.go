@@ -104,3 +104,7 @@ func testOperationJournalUpgrade(t *testing.T, previous int, table string) {
 		t.Fatal("new operation journal not initialized empty", err)
 	}
 }
+
+func TestPreflightRejectionUpgradePreservesInstallationHistory(t *testing.T) {
+	testOperationJournalUpgrade(t, 19, "station.runtime_management_transitions")
+}
