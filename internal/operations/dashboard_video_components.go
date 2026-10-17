@@ -11,7 +11,7 @@ func dashboardImagesMatch(images []dashboardManifestImage, release transitionRel
 	if release.AppID != "video-mcp" {
 		return len(images) == 1 && len(release.Components) == 0 && images[0].Image == release.AppImage
 	}
-	if (release.AppVersion != "0.17.28" && release.AppVersion != "0.17.29" && release.AppVersion != "0.17.30" && release.AppVersion != "0.17.31" && release.AppVersion != "0.17.32" && release.AppVersion != "0.17.35" && release.AppVersion != "0.17.37") || len(images) != 2 || len(release.Components) != 2 || images[0].Component != "api" || images[1].Component != "artifact-authority" {
+	if (release.AppVersion != "0.17.28" && release.AppVersion != "0.17.29" && release.AppVersion != "0.17.30" && release.AppVersion != "0.17.31" && release.AppVersion != "0.17.32" && release.AppVersion != "0.17.35" && release.AppVersion != "0.17.37" && release.AppVersion != "0.17.38" && release.AppVersion != "0.17.39") || len(images) != 2 || len(release.Components) != 2 || images[0].Component != "api" || images[1].Component != "artifact-authority" {
 		return false
 	}
 	for i, image := range images {

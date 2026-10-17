@@ -726,4 +726,45 @@ func TestPreinstalledDatabaseVideoParallelSourceRecoveryTransaction(t *testing.T
 	if json.Unmarshal(history, &original) != nil || original != from {
 		t.Fatal("original signed history replaced")
 	}
+	if _, err = f.service.Pool.Exec(ctx, `UPDATE station.app_installations SET app_version='0.17.37',revision=revision+1 WHERE installation_id=$1`, id); err != nil {
+		t.Fatal(err)
+	}
+	from2, to2 := to, videoFalEgressObservedSource()
+	c.AppID, c.AppVersion, c.Action = to2.AppID, to2.AppVersion, "adopt"
+	tx2, err := f.service.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx2.Rollback(ctx)
+	if _, err = reserveInstallation(ctx, tx2, f.actor, c, &PreinstalledCommand{Command: c, Release: to2}); !errors.Is(err, identity.Conflict) {
+		t.Fatal("unproven 0.17.37 -> 0.17.38 transition chain accepted", err)
+	}
+	transitionID2 := uuid.Must(uuid.NewV7()).String()
+	_, err = tx2.Exec(ctx, `INSERT INTO station.app_installation_transitions(operation_id,installation_id,user_id,organization_id,station_id,app_id,request_id,idempotency_key,request_hash,action,expected_revision,source_version,target_version,source_snapshot,target_snapshot,status,phase)
+    VALUES($1,$2,$3,$4,$5,'video-mcp','project-labels-chain','project-labels-chain',decode(repeat('11',32),'hex'),'upgrade',2,'0.17.35','0.17.37',$6,$7,'succeeded','completed')`, transitionID2, id, f.actor.UserID, f.actor.OrganizationID, f.actor.StationID, videoProjectLabelsSourceSnapshot, videoProjectLabelsTargetSnapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotID2, err := reserveInstallation(ctx, tx2, f.actor, c, &PreinstalledCommand{Command: c, Release: to2})
+	if err != nil || gotID2 != id {
+		t.Fatal("0.17.38 recovery lost installation", err)
+	}
+	newOp2 := uuid.Must(uuid.NewV7()).String()
+	if _, err = tx2.Exec(ctx, `INSERT INTO station.app_operations SELECT (jsonb_populate_record(NULL::station.app_operations,to_jsonb(o)||jsonb_build_object('operation_id',$2::text,'idempotency_key','video-recovery-038','app_id','video-mcp','app_version','0.17.38','action','adopt','status','accepted'))).* FROM station.app_operations o WHERE operation_id=$1`, op.OperationID, newOp2); err != nil {
+		t.Fatal(err)
+	}
+	if err = bindInstallationOperation(ctx, tx2, id, newOp2); err != nil {
+		t.Fatal(err)
+	}
+	if err = bindPreinstalled(ctx, tx2, newOp2, id, to2); err != nil {
+		t.Fatal(err)
+	}
+	if err = recordInstallationProgress(ctx, tx2, newOp2, "adopt", "succeeded"); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx2.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	check(to2)
+	_ = from2
 }
