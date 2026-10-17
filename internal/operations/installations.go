@@ -2,6 +2,7 @@ package operations
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/identity"
+	"github.com/verdantflarehub/verdantflare-station-core/internal/releasebinding"
 )
 
 // Installation describes the installed application, never an App's work instance.
@@ -28,12 +30,21 @@ type Installation struct {
 
 // reserveInstallation runs under Submit's Station/App advisory lock and transaction.
 // Idempotent operation replay is resolved before this function is called.
-func reserveInstallation(ctx context.Context, tx pgx.Tx, user identity.IdentityContext, c Command, trustedAdoption bool) (string, error) {
+func reserveInstallation(ctx context.Context, tx pgx.Tx, user identity.IdentityContext, c Command, preinstalled *PreinstalledCommand) (string, error) {
 	var id, org, installedVersion, state string
 	var bound bool
 	err := tx.QueryRow(ctx, `SELECT installation_id::text,organization_id::text,app_version,state,EXISTS(SELECT 1 FROM station.preinstalled_installation_bindings b WHERE b.installation_id=station.app_installations.installation_id) FROM station.app_installations WHERE station_id=$1 AND app_id=$2 AND state <> 'removed' FOR UPDATE`, c.StationID, c.AppID).Scan(&id, &org, &installedVersion, &state, &bound)
 	if err == nil {
-		if org != user.OrganizationID || (installedVersion != c.AppVersion && !legacyVersionAdoption(trustedAdoption, c.Action, state, bound)) {
+		allowed := legacyVersionAdoption(preinstalled != nil, c.Action, state, bound)
+		if preinstalled != nil && bound && installedVersion != c.AppVersion {
+			var raw []byte
+			if err := tx.QueryRow(ctx, `SELECT binding FROM station.preinstalled_installation_bindings WHERE installation_id=$1`, id).Scan(&raw); err != nil {
+				return "", err
+			}
+			var prior releasebinding.Binding
+			allowed = json.Unmarshal(raw, &prior) == nil && prior.AppVersion == installedVersion && videoSourceRecovery(prior, preinstalled.Release, c.Action, state)
+		}
+		if org != user.OrganizationID || (installedVersion != c.AppVersion && !allowed) {
 			return "", identity.Conflict
 		}
 		return id, nil
@@ -100,12 +111,31 @@ func recordInstallationProgress(ctx context.Context, tx pgx.Tx, operationID, act
 		}
 		// The operation was admitted against the inventory revision and Runtime
 		// verified the original workload. Bind only now, in this result transaction.
-		bound, e := tx.Exec(ctx, `INSERT INTO station.preinstalled_installation_bindings(installation_id,binding) SELECT $2,binding FROM station.preinstalled_operation_bindings WHERE operation_id=$1 ON CONFLICT(installation_id) DO NOTHING`, operationID, id)
+		var priorRaw, nextRaw []byte
+		e := tx.QueryRow(ctx, `SELECT (SELECT binding FROM station.preinstalled_installation_bindings WHERE installation_id=$2),binding FROM station.preinstalled_operation_bindings WHERE operation_id=$1`, operationID, id).Scan(&priorRaw, &nextRaw)
 		if e != nil {
 			return e
 		}
-		if bound.RowsAffected() != 1 {
-			return identity.Conflict
+		if len(priorRaw) > 0 {
+			var prior, next releasebinding.Binding
+			if json.Unmarshal(priorRaw, &prior) != nil || json.Unmarshal(nextRaw, &next) != nil || prior.AppVersion != installedVersion || next.AppVersion != observedVersion || !videoSourceRecovery(prior, next, action, state) {
+				return identity.Conflict
+			}
+			updated, err := tx.Exec(ctx, `UPDATE station.preinstalled_installation_bindings SET binding=$3 WHERE installation_id=$1 AND binding=$2`, id, priorRaw, nextRaw)
+			if err != nil {
+				return err
+			}
+			if updated.RowsAffected() != 1 {
+				return identity.Conflict
+			}
+		} else {
+			bound, e := tx.Exec(ctx, `INSERT INTO station.preinstalled_installation_bindings(installation_id,binding) SELECT $2,binding FROM station.preinstalled_operation_bindings WHERE operation_id=$1 ON CONFLICT(installation_id) DO NOTHING`, operationID, id)
+			if e != nil {
+				return e
+			}
+			if bound.RowsAffected() != 1 {
+				return identity.Conflict
+			}
 		}
 		_, e = tx.Exec(ctx, `UPDATE station.app_installations SET app_version=$2,revision=revision+1,updated_at=now() WHERE installation_id=$1`, id, observedVersion)
 		return e

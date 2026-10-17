@@ -457,3 +457,117 @@ func TestPreinstalledDatabaseMemoryInventoryAndDurableRevision(t *testing.T) {
 		t.Fatal("database failure returned complete inventory")
 	}
 }
+
+// This transaction-level test seeds historical metadata only in a disposable DB.
+// Admission signature/inventory checks remain covered by the service tests above.
+func TestPreinstalledDatabaseVideoSourceRecoveryTransaction(t *testing.T) {
+	f := preinstalledDatabaseFixture(t)
+	ctx := context.Background()
+	c := f.command(t, "video-history").Command
+	op, err := f.service.Submit(ctx, f.actor, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.service.DispatchOne(ctx, installationRuntime{"succeeded"}); err != nil {
+		t.Fatal(err)
+	}
+	id := f.inventory(t).History[0].Installation.InstallationID
+	from, to := videoOriginalSource(), videoObservedSource()
+	prior, _ := json.Marshal(from)
+	if _, err = f.service.Pool.Exec(ctx, `UPDATE station.app_installations SET app_id=$2,app_version=$3 WHERE installation_id=$1`, id, from.AppID, from.AppVersion); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.service.Pool.Exec(ctx, `INSERT INTO station.preinstalled_installation_bindings(installation_id,binding) VALUES($1,$2)`, id, prior); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.service.Pool.Exec(ctx, `INSERT INTO station.preinstalled_operation_bindings(operation_id,binding) VALUES($1,$2)`, op.OperationID, prior); err != nil {
+		t.Fatal(err)
+	}
+	check := func(want releasebinding.Binding) {
+		t.Helper()
+		var version string
+		var raw []byte
+		if err := f.service.Pool.QueryRow(ctx, `SELECT i.app_version,b.binding FROM station.app_installations i JOIN station.preinstalled_installation_bindings b USING(installation_id) WHERE installation_id=$1`, id).Scan(&version, &raw); err != nil {
+			t.Fatal(err)
+		}
+		var got releasebinding.Binding
+		if json.Unmarshal(raw, &got) != nil || got != want || version != want.AppVersion {
+			t.Fatal("version and binding changed non-atomically")
+		}
+	}
+	c.AppID, c.AppVersion, c.Action = to.AppID, to.AppVersion, "adopt"
+	tx, err := f.service.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err = reserveInstallation(ctx, tx, f.actor, c, nil); !errors.Is(err, identity.Conflict) {
+		t.Fatal("unsigned recovery admitted", err)
+	}
+	gotID, err := reserveInstallation(ctx, tx, f.actor, c, &PreinstalledCommand{Command: c, Release: to})
+	if err != nil || gotID != id {
+		t.Fatal("recovery lost installation", err)
+	}
+	// A second operation models an admitted recovery and retains the old history.
+	newOp := uuid.Must(uuid.NewV7()).String()
+	if _, err = tx.Exec(ctx, `INSERT INTO station.app_operations SELECT (jsonb_populate_record(NULL::station.app_operations,to_jsonb(o)||jsonb_build_object('operation_id',$2::text,'idempotency_key','video-recovery','app_id','video-mcp','app_version','0.17.30','action','adopt','status','accepted'))).* FROM station.app_operations o WHERE operation_id=$1`, op.OperationID, newOp); err != nil {
+		t.Fatal(err)
+	}
+	if err = bindInstallationOperation(ctx, tx, id, newOp); err != nil {
+		t.Fatal(err)
+	}
+	if err = bindPreinstalled(ctx, tx, newOp, id, to); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	check(from)
+	// Changed metadata between admission and completion cannot be overwritten.
+	conflictTx, err := f.service.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := from
+	changed.TemplateDigest = to.TemplateDigest
+	changedRaw, _ := json.Marshal(changed)
+	if _, err = conflictTx.Exec(ctx, `UPDATE station.preinstalled_installation_bindings SET binding=$2 WHERE installation_id=$1`, id, changedRaw); err != nil {
+		conflictTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err = recordInstallationProgress(ctx, conflictTx, newOp, "adopt", "succeeded"); !errors.Is(err, identity.Conflict) {
+		conflictTx.Rollback(ctx)
+		t.Fatal("changed source overwritten", err)
+	}
+	if err = conflictTx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	check(from)
+	for _, result := range []string{"running", "failed", "succeeded", "succeeded"} {
+		tx, err := f.service.Pool.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = recordInstallationProgress(ctx, tx, newOp, "adopt", result)
+		if err != nil {
+			tx.Rollback(ctx)
+			t.Fatal(err)
+		}
+		if err = tx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if result == "succeeded" {
+			check(to)
+		} else {
+			check(from)
+		}
+	}
+	var history []byte
+	if err = f.service.Pool.QueryRow(ctx, `SELECT binding FROM station.preinstalled_operation_bindings WHERE operation_id=$1`, op.OperationID).Scan(&history); err != nil {
+		t.Fatal(err)
+	}
+	var original releasebinding.Binding
+	if json.Unmarshal(history, &original) != nil || original != from {
+		t.Fatal("original signed history replaced")
+	}
+}

@@ -153,7 +153,12 @@ func (s *Service) validatePreinstalled(ctx context.Context, tx pgx.Tx, u identit
 		} else {
 			current = true
 			if item.Release != nil && *item.Release != in.Release {
-				return identity.Conflict
+				if !item.Confirmed || item.Installation.AppVersion != item.Release.AppVersion || !videoSourceRecovery(*item.Release, in.Release, in.Command.Action, item.Installation.State) {
+					return identity.Conflict
+				}
+				if s.Releases.Verify(*item.Release) != nil {
+					return releasebinding.ErrUntrusted
+				}
 			}
 		}
 	}
