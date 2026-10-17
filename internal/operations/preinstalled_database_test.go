@@ -463,7 +463,19 @@ func TestPreinstalledDatabaseMemoryInventoryAndDurableRevision(t *testing.T) {
 func TestPreinstalledDatabaseVideoSourceRecoveryTransaction(t *testing.T) {
 	f := preinstalledDatabaseFixture(t)
 	ctx := context.Background()
-	c := f.command(t, "video-history").Command
+	from, to := videoOriginalSource(), videoObservedSource()
+	// Create the historical Video identity from the outset. Application scope
+	// is immutable, even in an isolated fixture; never disable its DB trigger.
+	path := filepath.Join(t.TempDir(), "catalog.json")
+	if err := os.WriteFile(path, []byte(`[{"app_id":"video-mcp","display_name":"Video","group_id":"video","brand":"vf","models":[],"source":"deploys/test.yaml","namespace":"test","workload_name":"video-mcp","version":"0.17.28","images":[{"component":"server","image":"example.invalid/video:0.17.28"}]}]`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	apps, err := catalog.Load(path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.service.Catalog = apps
+	c := Command{RequestID: "video-history", IdempotencyKey: "video-history", OrganizationID: f.actor.OrganizationID, StationID: f.actor.StationID, AppID: from.AppID, AppVersion: from.AppVersion, Action: "install"}
 	op, err := f.service.Submit(ctx, f.actor, c)
 	if err != nil {
 		t.Fatal(err)
@@ -471,12 +483,12 @@ func TestPreinstalledDatabaseVideoSourceRecoveryTransaction(t *testing.T) {
 	if _, err = f.service.DispatchOne(ctx, installationRuntime{"succeeded"}); err != nil {
 		t.Fatal(err)
 	}
-	id := f.inventory(t).History[0].Installation.InstallationID
-	from, to := videoOriginalSource(), videoObservedSource()
-	prior, _ := json.Marshal(from)
-	if _, err = f.service.Pool.Exec(ctx, `UPDATE station.app_installations SET app_id=$2,app_version=$3 WHERE installation_id=$1`, id, from.AppID, from.AppVersion); err != nil {
+	items, err := f.service.ListInstallations(ctx, f.actor)
+	if err != nil || len(items) != 1 {
 		t.Fatal(err)
 	}
+	id := items[0].InstallationID
+	prior, _ := json.Marshal(from)
 	if _, err = f.service.Pool.Exec(ctx, `INSERT INTO station.preinstalled_installation_bindings(installation_id,binding) VALUES($1,$2)`, id, prior); err != nil {
 		t.Fatal(err)
 	}
