@@ -10,7 +10,7 @@ import (
 )
 
 func TestVideoDashboardReleaseBindsBothImages(t *testing.T) {
-	for _, version := range []string{"0.17.28", "0.17.29"} {
+	for _, version := range []string{"0.17.28", "0.17.29", "0.17.30", "0.17.31"} {
 		for _, scenario := range []string{"valid", "missing-component", "extra-component", "wrong-primary-digest", "wrong-sidecar-digest", "wrong-sidecar-image", "wrong-manifest", "duplicate-component", "unsupported-version", "other-app"} {
 			t.Run(version+"/"+scenario, func(t *testing.T) {
 				s, e := dashboardMaterialFixture(t)
@@ -26,7 +26,7 @@ func TestVideoDashboardReleaseBindsBothImages(t *testing.T) {
 				release.AppImage = strings.ReplaceAll(release.AppImage, release.AppVersion, version)
 				e.AppID, e.AppVersion = "video-mcp", version
 				if scenario == "unsupported-version" {
-					e.AppVersion = "0.17.30"
+					e.AppVersion = "0.17.32"
 					release.AppImage = strings.ReplaceAll(release.AppImage, version, e.AppVersion)
 				}
 				if scenario == "other-app" {
