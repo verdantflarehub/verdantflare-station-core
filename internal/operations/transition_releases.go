@@ -34,15 +34,22 @@ type transitionReleaseEntry struct {
 }
 
 type transitionReleaseIndex struct {
-	SchemaVersion     int               `json:"schemaVersion"`
-	AppID             string            `json:"appId"`
-	AppVersion        string            `json:"appVersion"`
-	SourceCommit      string            `json:"sourceCommit"`
-	ActionsRunID      string            `json:"actionsRunId"`
-	ActionsRunAttempt string            `json:"actionsRunAttempt"`
-	AppImage          string            `json:"appImage"`
-	AppImageDigest    string            `json:"appImageDigest"`
-	Files             map[string]string `json:"files"`
+	SchemaVersion     int                         `json:"schemaVersion"`
+	AppID             string                      `json:"appId"`
+	AppVersion        string                      `json:"appVersion"`
+	SourceCommit      string                      `json:"sourceCommit"`
+	ActionsRunID      string                      `json:"actionsRunId"`
+	ActionsRunAttempt string                      `json:"actionsRunAttempt"`
+	AppImage          string                      `json:"appImage"`
+	AppImageDigest    string                      `json:"appImageDigest"`
+	Components        []dashboardReleaseComponent `json:"components,omitempty"`
+	Files             map[string]string           `json:"files"`
+}
+
+type dashboardReleaseComponent struct {
+	Name        string `json:"name"`
+	Image       string `json:"image"`
+	ImageDigest string `json:"imageDigest"`
 }
 
 func materialPath(ref string) bool {
@@ -229,7 +236,7 @@ func verifyTransitionMaterial(ctx context.Context, root *os.Root, entry transiti
 		!regexp.MustCompile(`^[a-f0-9]{40}$`).MatchString(index.SourceCommit) || !transitionDigest.MatchString(index.AppImageDigest) ||
 		!regexp.MustCompile(`^[1-9][0-9]{0,19}$`).MatchString(index.ActionsRunID) || !regexp.MustCompile(`^[1-9][0-9]{0,9}$`).MatchString(index.ActionsRunAttempt) ||
 		!regexp.MustCompile(`^[a-z0-9][a-z0-9./:_-]*:[a-z0-9][a-z0-9._-]*-v`+regexp.QuoteMeta(snapshot.AppVersion)+`$`).MatchString(index.AppImage) ||
-		len(index.Files) < 5 || len(index.Files) > 260 {
+		len(index.Components) != 0 || len(index.Files) < 5 || len(index.Files) > 260 {
 		return ErrTransitionRelease
 	}
 	materials, total := map[string][]byte{}, 0

@@ -119,7 +119,10 @@ func TestDashboardReleasesRejectMaterialAndRegistryTampering(t *testing.T) {
 }
 func TestDashboardReleasesRejectRehashedInvalidRelease(t *testing.T) {
 	for name, change := range map[string]func(*transitionReleaseIndex){
-		"wrong app":       func(r *transitionReleaseIndex) { r.AppID = "other" },
+		"wrong app": func(r *transitionReleaseIndex) { r.AppID = "other" },
+		"unexpected components": func(r *transitionReleaseIndex) {
+			r.Components = []dashboardReleaseComponent{{Name: "app", Image: r.AppImage, ImageDigest: r.AppImageDigest}}
+		},
 		"wrong version":   func(r *transitionReleaseIndex) { r.AppVersion = "99.0.0" },
 		"source":          func(r *transitionReleaseIndex) { r.SourceCommit = "main" },
 		"run":             func(r *transitionReleaseIndex) { r.ActionsRunID = "0" },

@@ -34,7 +34,7 @@ func transitionMaterialFixture(t *testing.T) (*TransitionReleases, identity.Iden
 			"workspace-index.json": []byte(`{"schemaVersion":1,"files":{}}`), "dashboard/dashboard-declaration.json": declaration,
 			"dashboard/asset-index.json": index, "dashboard/index.html": asset}
 		release := transitionReleaseIndex{1, snapshot.AppID, snapshot.AppVersion, strings.Repeat("a", 40), "123", "1",
-			"registry.example/apps:" + snapshot.AppID + "-v" + snapshot.AppVersion, "sha256:" + strings.Repeat("f", 64), map[string]string{}}
+			"registry.example/apps:" + snapshot.AppID + "-v" + snapshot.AppVersion, "sha256:" + strings.Repeat("f", 64), nil, map[string]string{}}
 		for name, raw := range materials {
 			writeMaterial(t, root, prefix+"/"+name, raw)
 			release.Files[name] = strings.TrimPrefix(materialDigest(raw), "sha256:")

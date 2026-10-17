@@ -90,13 +90,10 @@ func verifyDashboardRelease(ctx context.Context, root *os.Root, e dashboardRelea
 		AppID      string `json:"app_id"`
 		Version    string `json:"version"`
 		Deployment struct {
-			Images []struct {
-				Component string `json:"component"`
-				Image     string `json:"image"`
-			} `json:"images"`
+			Images []dashboardManifestImage `json:"images"`
 		} `json:"deployment"`
 	}
-	if err != nil || json.Unmarshal(validated, &identity) != nil || identity.AppID != e.AppID || identity.Version != e.AppVersion || len(identity.Deployment.Images) != 1 {
+	if err != nil || json.Unmarshal(validated, &identity) != nil || identity.AppID != e.AppID || identity.Version != e.AppVersion {
 		return ErrAppCenterRelease
 	}
 	raw, err := materialRead(ctx, root, e.ReleaseIndexRef, 1<<20)
@@ -108,7 +105,7 @@ func verifyDashboardRelease(ctx context.Context, root *os.Root, e dashboardRelea
 		!regexp.MustCompile(`^[a-f0-9]{40}$`).MatchString(release.SourceCommit) || !transitionDigest.MatchString(release.AppImageDigest) ||
 		!regexp.MustCompile(`^[1-9][0-9]{0,19}$`).MatchString(release.ActionsRunID) || !regexp.MustCompile(`^[1-9][0-9]{0,9}$`).MatchString(release.ActionsRunAttempt) ||
 		!regexp.MustCompile(`^[a-z0-9][a-z0-9./:_-]*:[a-z0-9][a-z0-9._-]*-v`+regexp.QuoteMeta(e.AppVersion)+`$`).MatchString(release.AppImage) ||
-		identity.Deployment.Images[0].Image != release.AppImage || len(release.Files) < 3 || len(release.Files) > 258 {
+		!dashboardImagesMatch(identity.Deployment.Images, release) || len(release.Files) < 3 || len(release.Files) > 258 {
 		return ErrAppCenterRelease
 	}
 	materials, total := map[string][]byte{}, 0
