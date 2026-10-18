@@ -72,16 +72,13 @@ func (s *AppCenterAdmissionSource) policies(ctx context.Context) ([]AppCenterRel
 		key := p.AppID + "@" + p.AppVersion
 		if !appCenterAppName.MatchString(p.AppID) || len(p.AppVersion) > 64 || !appCenterVersion.MatchString(p.AppVersion) ||
 			!slices.Contains([]string{"signed-package", "management-release", "dashboard-release"}, p.ReleaseKind) || !transitionName.MatchString(p.ReleaseRef) ||
-			len(p.Actions) == 0 || len(p.Actions) > 4 || seen[key] {
+			len(p.Actions) == 0 || len(p.Actions) > 5 || seen[key] {
 			return nil, ErrAppCenterRelease
 		}
 		seen[key] = true
 		actions := map[string]bool{}
 		for _, action := range p.Actions {
-			if p.ReleaseKind == "dashboard-release" && action != "install" && action != "start" {
-				return nil, ErrAppCenterRelease
-			}
-			if !slices.Contains([]string{"install", "start", "stop", "restart"}, action) || actions[action] {
+			if !slices.Contains([]string{"install", "start", "stop", "restart", "delete"}, action) || actions[action] {
 				return nil, ErrAppCenterRelease
 			}
 			actions[action] = true
@@ -110,7 +107,7 @@ func (s *AppCenterAdmissionSource) resolve(ctx context.Context, actor identity.I
 		if installed != nil {
 			return zero, ErrAppCenterBinding
 		}
-	} else if command.Action == "start" || command.Action == "stop" || command.Action == "restart" {
+	} else if command.Action == "start" || command.Action == "stop" || command.Action == "restart" || command.Action == "delete" {
 		if installed == nil || installed.StationID != actor.StationID || installed.OrganizationID != actor.OrganizationID || installed.AppID != command.AppID ||
 			installed.AppVersion != command.AppVersion || installed.State != "installed" {
 			return zero, ErrAppCenterBinding
@@ -224,7 +221,7 @@ func (s *AppCenterAdmissionSource) Read(ctx context.Context, actor identity.Iden
 			if observation.State != "running" {
 				return zero, ErrAppCenterBinding
 			}
-		case "restart":
+		case "restart", "delete":
 			if observation.State != "running" && observation.State != "stopped" {
 				return zero, ErrAppCenterBinding
 			}

@@ -51,9 +51,9 @@ func (s *AppCenterAdmissionSource) projectCandidate(ctx context.Context, actor i
 		version = v.AppVersion
 		installation = &Installation{InstallationID: v.InstallationID, Revision: v.Revision, AppID: fact.AppID, AppVersion: v.AppVersion, State: v.State, StationID: actor.StationID, OrganizationID: actor.OrganizationID}
 		if fact.Service.State == "stopped" {
-			kinds = []string{"start"}
+			kinds = []string{"start", "delete"}
 		} else if fact.Service.State == "ready" || fact.Service.State == "degraded" || fact.Service.State == "running" || fact.Service.State == "starting" {
-			kinds = []string{"stop", "restart"}
+			kinds = []string{"stop", "restart", "delete"}
 		}
 	} else if fact.Origin == "catalog" && fact.Installation == nil && fact.Catalog != nil && fact.Service.State == "absent" {
 		kinds = []string{"install"}
@@ -77,7 +77,7 @@ func (s *AppCenterAdmissionSource) projectCandidate(ctx context.Context, actor i
 			}
 		} else {
 			fact.Lifecycle.PolicyRevision = execution.PolicyRevision
-			if kind == "start" || kind == "stop" || kind == "restart" {
+			if kind == "start" || kind == "stop" || kind == "restart" || kind == "delete" {
 				// Evidence is already scoped by Core. Bind it to the exact local
 				// release without a Runtime call; submission still re-inspects live.
 				if fact.Service.WorkloadUID == nil || fact.Catalog == nil || fact.Catalog.Deployment.UID != *fact.Service.WorkloadUID ||

@@ -148,12 +148,12 @@ func TestDashboardReleasesRejectRehashedInvalidRelease(t *testing.T) {
 		})
 	}
 }
-func TestDashboardReleaseAdmissionDoesNotGrantDisruptiveActions(t *testing.T) {
+func TestDashboardReleaseAdmissionSupportsLifecycleActions(t *testing.T) {
 	source, e := dashboardMaterialFixture(t)
 	actor := identity.IdentityContext{UserID: uuid.NewString(), OrganizationID: uuid.NewString(), StationID: uuid.NewString(), Roles: []string{"admin"}, Scopes: []string{"app:manage", "app:read"}}
 	runtime := &admissionRuntime{}
 	admission := &AppCenterAdmissionSource{Path: filepath.Join(filepath.Dir(source.Path), "commands.json"), Dashboard: source, Runtime: runtime}
-	policy := AppCenterReleasePolicy{e.AppID, e.AppVersion, "dashboard-release", e.ReleaseRef, []string{"install", "start"}}
+	policy := AppCenterReleasePolicy{e.AppID, e.AppVersion, "dashboard-release", e.ReleaseRef, []string{"install", "start", "stop", "restart", "delete"}}
 	writeCommandPolicies(t, admission, true, []AppCenterReleasePolicy{policy})
 	command := Command{AppID: e.AppID, AppVersion: e.AppVersion, Action: "install", OrganizationID: actor.OrganizationID, StationID: actor.StationID}
 	first, err := admission.Read(context.Background(), actor, command, nil)
@@ -168,11 +168,11 @@ func TestDashboardReleaseAdmissionDoesNotGrantDisruptiveActions(t *testing.T) {
 	if err != nil || second.PolicyRevision == first.Execution.PolicyRevision || second.ReleaseDigest == first.Execution.ReleaseDigest {
 		t.Fatal("binding proof not changed", err)
 	}
-	for _, action := range []string{"stop", "restart"} {
+	for _, action := range []string{"adopt", "upgrade"} {
 		policy.Actions = []string{"install", action}
 		writeCommandPolicies(t, admission, true, []AppCenterReleasePolicy{policy})
 		if _, err := admission.Read(context.Background(), actor, command, nil); !errors.Is(err, ErrAppCenterRelease) {
-			t.Fatal("disruptive policy accepted", err)
+			t.Fatal("unsupported policy accepted", err)
 		}
 	}
 	if runtime.calls != 1 {
