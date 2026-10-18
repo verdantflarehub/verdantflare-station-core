@@ -52,6 +52,14 @@ func dashboardTransitionSnapshot(ctx context.Context, root *os.Root, e dashboard
 	if verifyDashboardRelease(ctx, root, e) != nil {
 		return zero, ErrAppCenterRelease
 	}
+	if e.ReleaseIndexRef == e.ManifestRef && e.ReleaseDigest == e.ManifestDigest {
+		s := TransitionSnapshot{AppID: e.AppID, AppVersion: e.AppVersion, ReleaseRef: e.ReleaseRef, ReleaseDigest: e.ReleaseDigest, ManifestDigest: e.ManifestDigest,
+			TemplateDigest: e.TemplateDigest, DashboardDigest: e.ManifestDigest, CompatibleWorkerVersions: []string{}, ReleaseKind: "dashboard-release", AppImageDigest: e.ManifestDigest}
+		if !s.valid() {
+			return zero, ErrAppCenterRelease
+		}
+		return s, nil
+	}
 	raw, err := materialRead(ctx, root, e.ReleaseIndexRef, 1<<20)
 	var release transitionReleaseIndex
 	if err != nil || materialDecode(raw, &release) != nil || materialDigest(raw) != e.ReleaseDigest {

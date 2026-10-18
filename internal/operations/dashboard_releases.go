@@ -53,7 +53,7 @@ func (s *DashboardReleases) load(ctx context.Context) (*os.Root, []dashboardRele
 	versions, refs := map[string]bool{}, map[string]bool{}
 	for _, e := range registry.Releases {
 		key := e.AppID + "@" + e.AppVersion
-		if versions[key] || refs[e.ReleaseRef] || !materialPath(e.ReleaseIndexRef) || !materialPath(e.ManifestRef) || e.ReleaseIndexRef == e.ManifestRef {
+		if versions[key] || refs[e.ReleaseRef] || !materialPath(e.ReleaseIndexRef) || !materialPath(e.ManifestRef) || (e.ReleaseIndexRef == e.ManifestRef && e.ReleaseDigest != e.ManifestDigest) {
 			return fail()
 		}
 		versions[key], refs[e.ReleaseRef] = true, true
@@ -95,6 +95,17 @@ func verifyDashboardRelease(ctx context.Context, root *os.Root, e dashboardRelea
 	}
 	if err != nil || json.Unmarshal(validated, &identity) != nil || identity.AppID != e.AppID || identity.Version != e.AppVersion {
 		return ErrAppCenterRelease
+	}
+	if e.ReleaseIndexRef == e.ManifestRef && e.ReleaseDigest == e.ManifestDigest {
+		if len(identity.Deployment.Images) == 0 || !transitionDigest.MatchString(e.TemplateDigest) {
+			return ErrAppCenterRelease
+		}
+		for _, img := range identity.Deployment.Images {
+			if strings.TrimSpace(img.Component) == "" || strings.TrimSpace(img.Image) == "" {
+				return ErrAppCenterRelease
+			}
+		}
+		return nil
 	}
 	raw, err := materialRead(ctx, root, e.ReleaseIndexRef, 1<<20)
 	if err != nil || materialDigest(raw) != e.ReleaseDigest {
