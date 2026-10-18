@@ -291,3 +291,13 @@ func (s *Service) Expire(ctx context.Context) error {
 	s.memory().Expire()
 	return nil
 }
+
+// ResetAppBindings resets in-memory location bindings for appID outside targetNamespace.
+func (s *Service) ResetAppBindings(appID, targetNamespace string) {
+	if s == nil {
+		return
+	}
+	if m := s.memory(); m != nil {
+		m.ResetAppBindings(appID, targetNamespace)
+	}
+}

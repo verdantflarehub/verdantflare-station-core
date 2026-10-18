@@ -6,9 +6,45 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 )
+
+var defaultDiscoveryNamespaces = []string{
+	"verdantflare-app",
+	"verdantflare-station",
+	"verdantflare-video",
+	"verdantflare-image",
+	"verdantflare-music",
+	"verdantflare-speech",
+	"verdantflare-comfyui",
+	"verdantflare-blender",
+	"verdantflare-google",
+	"verdantflare-chatgpt",
+	"verdantflare-grok",
+}
+
+// DiscoveryNamespaces resolves the ordered fallback namespace list from raw
+// comma-separated configuration or the default unified+legacy namespace set.
+func DiscoveryNamespaces(raw string) []string {
+	var out []string
+	seen := make(map[string]bool)
+	for _, part := range strings.Split(raw, ",") {
+		ns := strings.TrimSpace(part)
+		if ns == "" || !dnsName.MatchString(ns) || len(ns) > 63 || seen[ns] {
+			continue
+		}
+		seen[ns] = true
+		out = append(out, ns)
+	}
+	if len(out) > 0 {
+		return out
+	}
+	out = make([]string, len(defaultDiscoveryNamespaces))
+	copy(out, defaultDiscoveryNamespaces)
+	return out
+}
 
 // Discoverer dynamically locates installed and managed applications in the cluster.
 type Discoverer interface {
@@ -128,8 +164,8 @@ func (k *Kubernetes) Discover(ctx context.Context) ([]Item, error) {
 		resp.Body.Close()
 	}
 
-	// 2. Fallback to known namespaces if cluster-wide is forbidden (403) or not found
-	knownNamespaces := []string{"verdantflare-video", "verdantflare-image", "verdantflare-music", "verdantflare-station"}
+	// 2. Fallback to configured or known namespaces if cluster-wide is forbidden (403) or not found
+	knownNamespaces := DiscoveryNamespaces(os.Getenv("STATION_CATALOG_NAMESPACES"))
 	var allItems []Item
 	seen := make(map[string]bool)
 	for _, ns := range knownNamespaces {

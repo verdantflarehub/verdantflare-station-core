@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -43,8 +46,8 @@ func run() int {
 	if len(os.Args) > 1 {
 		mode = os.Args[1]
 	}
-	if len(os.Args) > 2 || (mode != "serve" && mode != "migrate" && mode != "bind-mcp-token") {
-		logger.Error("usage", "command", "station-core [serve|migrate|bind-mcp-token]")
+	if len(os.Args) > 2 || (mode != "serve" && mode != "migrate" && mode != "bind-mcp-token" && mode != "migrate-namespace") {
+		logger.Error("usage", "command", "station-core [serve|migrate|bind-mcp-token|migrate-namespace]")
 		return 1
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -99,6 +102,31 @@ func run() int {
 			return 1
 		}
 		logger.Info("mcp_token_bound", "session_id", bound.SessionID, "expires_at", bound.ExpiresAt)
+		return 0
+	}
+	if mode == "migrate-namespace" {
+		raw := []byte(os.Getenv("STATION_NAMESPACE_MIGRATION_JSON"))
+		if len(bytes.TrimSpace(raw)) == 0 {
+			raw, err = io.ReadAll(io.LimitReader(os.Stdin, 64<<10))
+			if err != nil {
+				logger.Error("namespace_migration_input_invalid")
+				return 1
+			}
+		}
+		var req operations.NamespaceMigrationRequest
+		d := json.NewDecoder(bytes.NewReader(raw))
+		d.DisallowUnknownFields()
+		if err = d.Decode(&req); err != nil || d.Decode(new(any)) != io.EOF {
+			logger.Error("namespace_migration_input_invalid")
+			return 1
+		}
+		ops := &operations.Service{Pool: pool, StationID: c.StationID}
+		res, err := ops.MigrateNamespace(checkCtx, req)
+		if err != nil {
+			logger.Error("namespace_migration_failed")
+			return 1
+		}
+		logger.Info("namespace_migration_complete", "app_id", res.AppID, "target_namespace", res.TargetNamespace, "updated_app_instance_workspaces", res.UpdatedAppInstanceWorkspaces, "updated_runtime_instance_workspaces", res.UpdatedRuntimeInstanceWorkspaces)
 		return 0
 	}
 	var appCatalog *catalog.Service

@@ -479,8 +479,12 @@ func (m *Memory) project(b *memoryBinding, now time.Time, resources []memoryCand
 	if len(candidates) == 1 {
 		c, o := candidates[0].c, candidates[0].o
 		if b.collector != "" && (b.collector != c.config.ID || b.namespace != o.Namespace || b.name != o.Name) {
-			unknown.ReasonCode = "IDENTITY_CONFLICT"
-			return unknown
+			if oldCollector := m.collectors[b.collector]; oldCollector != nil {
+				if _, stillPresent := oldCollector.objects[b.namespace+"/"+b.name]; stillPresent {
+					unknown.ReasonCode = "IDENTITY_CONFLICT"
+					return unknown
+				}
+			}
 		}
 		b.collector, b.namespace, b.name, b.uid = c.config.ID, o.Namespace, o.Name, o.UID
 		b.absentAt, b.absentExpires = time.Time{}, time.Time{}
@@ -508,4 +512,33 @@ func (m *Memory) project(b *memoryBinding, now time.Time, resources []memoryCand
 		}
 	}
 	return unknown
+}
+
+// ResetAppBindings clears cached observations and location bindings for appID
+// outside targetNamespace during controlled namespace migration, then recomputes.
+func (m *Memory) ResetAppBindings(appID, targetNamespace string) {
+	if m == nil || appID == "" {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, c := range m.collectors {
+		for key, o := range c.objects {
+			if o.AppID == appID && (targetNamespace == "" || o.Namespace != targetNamespace) {
+				delete(c.objects, key)
+			}
+		}
+	}
+	for _, b := range m.bindings {
+		if b.AppID == appID && (targetNamespace == "" || b.namespace != targetNamespace) {
+			b.collector, b.namespace, b.name, b.uid = "", "", "", ""
+			b.absentAt, b.absentExpires = time.Time{}, time.Time{}
+		}
+	}
+	for i := range m.legacy {
+		if m.legacy[i].AppID == appID && targetNamespace != "" && m.legacy[i].namespace != targetNamespace {
+			m.legacy[i].namespace = targetNamespace
+		}
+	}
+	m.projectAll(m.now())
 }

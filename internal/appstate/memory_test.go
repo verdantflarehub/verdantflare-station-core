@@ -362,3 +362,61 @@ func TestMemoryReclaimsRetiredInstallationBindings(t *testing.T) {
 		t.Fatal("rejected registry partially applied")
 	}
 }
+
+func TestMemoryNamespaceMigrationAndResetAppBindings(t *testing.T) {
+	station := uuid.NewString()
+	c := Collector{ID: "runtime", Namespaces: []string{"verdantflare-comfyui", "verdantflare-app"}}
+	m, err := NewMemory(station, []Collector{c})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 10, 18, 0, 0, 0, 0, time.UTC)
+	m.now = func() time.Time { return now }
+	s, err := m.Open("runtime")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := Binding{InstallationID: uuid.NewString(), OrganizationID: uuid.NewString(), AppID: "comfyui"}
+	oldObs := ResourceObservation{
+		Namespace: "verdantflare-comfyui", Name: "comfyui-manager", UID: uuid.NewString(), ResourceVersion: "1",
+		StationID: station, OrganizationID: b.OrganizationID, InstallationID: b.InstallationID, AppID: b.AppID,
+		Generation: 1, ObservedGeneration: 1, Desired: 1, Replicas: 1, Ready: 1, Updated: 1, Available: 1, Health: "not_checked",
+	}
+	memoryFull(t, s, oldObs)
+	if got := memoryView(t, m, b).Runtime; got.State != "ready" {
+		t.Fatalf("expected initial ready state, got %+v", got)
+	}
+
+	// Delete old workload in legacy namespace and upsert new workload in verdantflare-app.
+	if err := s.Delete(oldObs.Namespace, oldObs.Name, oldObs.UID); err != nil {
+		t.Fatal(err)
+	}
+	newObs := oldObs
+	newObs.Namespace = "verdantflare-app"
+	newObs.UID = uuid.NewString()
+	newObs.ResourceVersion = "2"
+	if err := s.Upsert(newObs); err != nil {
+		t.Fatal(err)
+	}
+	got := memoryView(t, m, b)
+	if got.Runtime.State != "ready" || got.Runtime.ReasonCode == "IDENTITY_CONFLICT" {
+		t.Fatalf("expected migrated workload in verdantflare-app to be ready without IDENTITY_CONFLICT, got %+v", got.Runtime)
+	}
+	if got.Resource == nil || got.Resource.Namespace != "verdantflare-app" || got.Resource.UID != newObs.UID {
+		t.Fatalf("expected resource bound to verdantflare-app, got %+v", got.Resource)
+	}
+
+	// Verify ResetAppBindings clears stale legacy observations if both briefly existed before delete.
+	if err := s.Upsert(oldObs); err != nil {
+		t.Fatal(err)
+	}
+	if conflict := memoryView(t, m, b).Runtime; conflict.ReasonCode != "IDENTITY_CONFLICT" {
+		t.Fatalf("expected conflict when both namespaces have active workloads, got %+v", conflict)
+	}
+	svc := &Service{StationID: station, Observations: m}
+	svc.ResetAppBindings("comfyui", "verdantflare-app")
+	afterReset := memoryView(t, m, b)
+	if afterReset.Runtime.State != "ready" || afterReset.Resource == nil || afterReset.Resource.Namespace != "verdantflare-app" {
+		t.Fatalf("expected ResetAppBindings to clear non-target namespace observation and restore ready state, got %+v", afterReset)
+	}
+}

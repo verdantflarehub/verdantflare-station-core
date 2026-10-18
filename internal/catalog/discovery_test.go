@@ -275,3 +275,35 @@ func TestDynamicDiscovery_AggregationWithStaticCatalog(t *testing.T) {
 		t.Fatalf("expected to get image-mcp-server, found=%v", found)
 	}
 }
+
+func TestDiscoveryNamespacesConfigAndUnifiedDefault(t *testing.T) {
+	defaults := DiscoveryNamespaces("")
+	if len(defaults) == 0 || defaults[0] != "verdantflare-app" {
+		t.Fatalf("expected verdantflare-app first in default discovery namespaces, got %v", defaults)
+	}
+	configured := DiscoveryNamespaces(" verdantflare-app , verdantflare-station , verdantflare-app , invalid_ns ")
+	if len(configured) != 2 || configured[0] != "verdantflare-app" || configured[1] != "verdantflare-station" {
+		t.Fatalf("unexpected configured namespaces: %v", configured)
+	}
+
+	t.Setenv("STATION_CATALOG_NAMESPACES", "verdantflare-app")
+	var queried []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/apis/apps/v1/deployments" {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		queried = append(queried, r.URL.Path)
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{}})
+	}))
+	defer server.Close()
+
+	reader := &Kubernetes{server.URL, server.Client()}
+	if _, err := reader.Discover(context.Background()); err != nil {
+		t.Fatalf("discover failed: %v", err)
+	}
+	if len(queried) != 1 || queried[0] != "/apis/apps/v1/namespaces/verdantflare-app/deployments" {
+		t.Fatalf("expected only verdantflare-app namespace query, got %v", queried)
+	}
+}
