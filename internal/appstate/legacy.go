@@ -91,15 +91,15 @@ func validateLegacy(station string, bindings []legacyBinding, entries []catalog.
 		b := &bindings[i]
 		e, exists := registry[b.AppID]
 		matchedNS, matchedName := e.Namespace, e.WorkloadName
-		if exists && b.ObservationKey != "obs:"+appcenter.Digest([]string{matchedNS, matchedName, b.WorkloadUID})[7:] && e.Namespace == "verdantflare-app" {
+		if exists && b.ObservationKey != "obs:"+appcenter.Digest([]string{matchedNS, matchedName, b.WorkloadUID})[7:] {
 			legacyCandidates := [][2]string{}
 			switch e.AppID {
 			case "image-mcp":
-				legacyCandidates = append(legacyCandidates, [2]string{"verdantflare-image", "image-mcp-server"})
+				legacyCandidates = append(legacyCandidates, [2]string{"verdantflare-app", "image-mcp-server"}, [2]string{"verdantflare-image", "image-mcp-server"})
 			case "video-mcp":
-				legacyCandidates = append(legacyCandidates, [2]string{"verdantflare-video", "video-mcp-server"})
+				legacyCandidates = append(legacyCandidates, [2]string{"verdantflare-app", "video-mcp-server"}, [2]string{"verdantflare-video", "video-mcp-server"})
 			case "blender":
-				legacyCandidates = append(legacyCandidates, [2]string{"verdantflare-app", "blender"}, [2]string{"verdantflare-blender", "blender"})
+				legacyCandidates = append(legacyCandidates, [2]string{"verdantflare-app", "blender-manager"}, [2]string{"verdantflare-app", "blender"}, [2]string{"verdantflare-blender", "blender"})
 			}
 			for _, cand := range legacyCandidates {
 				if b.ObservationKey == "obs:"+appcenter.Digest([]string{cand[0], cand[1], b.WorkloadUID})[7:] {

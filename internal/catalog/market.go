@@ -28,6 +28,7 @@ type marketAppsYAML struct {
 	SchemaVersion int              `json:"schemaVersion"`
 	GeneratedAt   string           `json:"generatedAt"`
 	Revision      string           `json:"revision"`
+	Apps          []marketYAMLItem `json:"apps"`
 	Items         []marketYAMLItem `json:"items"`
 }
 
@@ -166,14 +167,18 @@ func (s *Service) RefreshMarket(ctx context.Context) error {
 	if err := yaml.Unmarshal(raw, &doc); err != nil {
 		return fmt.Errorf("invalid market apps.yaml: %w", err)
 	}
-	if doc.SchemaVersion != 2 || len(doc.Items) == 0 || len(doc.Items) > 200 {
+	rawItems := doc.Apps
+	if len(rawItems) == 0 {
+		rawItems = doc.Items
+	}
+	if doc.SchemaVersion != 2 || len(rawItems) == 0 || len(rawItems) > 200 {
 		return errors.New("invalid market apps.yaml schema or item count")
 	}
 
-	entries := make([]Entry, 0, len(doc.Items))
+	entries := make([]Entry, 0, len(rawItems))
 	ids := map[string]bool{}
 	targets := map[string]bool{}
-	for idx, item := range doc.Items {
+	for idx, item := range rawItems {
 		appID := strings.TrimSpace(item.AppID)
 		if !dnsName.MatchString(appID) || len(appID) > 63 || ids[appID] {
 			return fmt.Errorf("invalid or duplicate market appId %q", appID)
@@ -238,7 +243,16 @@ func (s *Service) RefreshMarket(ctx context.Context) error {
 				}
 			}
 		} else {
-			ver = ""
+			if ver != "" && !version.MatchString(ver) {
+				ver = ""
+			}
+			if ver == "" && len(images) > 0 {
+				if idx := strings.LastIndex(images[0].Image, "-v"); idx >= 0 {
+					if cand := strings.TrimSpace(images[0].Image[idx+2:]); version.MatchString(cand) {
+						ver = cand
+					}
+				}
+			}
 			if disabledReason == "" {
 				disabledReason = "尚未发布可安装的 Chart OCI 版本"
 			}

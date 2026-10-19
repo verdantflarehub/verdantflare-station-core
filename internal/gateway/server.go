@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/jackc/pgx/v5"
 	"io"
 	"log/slog"
 	"mime"
@@ -17,6 +16,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/google/uuid"
 
@@ -29,8 +30,7 @@ import (
 	"github.com/verdantflarehub/verdantflare-station-core/migrations"
 )
 
-const Version = "0.3.50"
-
+const Version = "0.3.51"
 
 var requestIDPattern = regexp.MustCompile(`^[a-zA-Z0-9._:-]{1,128}$`)
 
@@ -254,7 +254,7 @@ func (s *Server) ServeHTTP(original http.ResponseWriter, r *http.Request) {
 		"/internal/v1/blender/destroy":                    "POST",
 		"/internal/v1/blender/access":                     "POST",
 		"/internal/v1/blender/options":                    "POST",
-		"/app-commands": "POST", "/healthz": "GET", "/readyz": "GET", "/identity/bootstrap": "POST", "/identity/login": "POST", "/identity/refresh": "POST", "/identity/logout": "POST", "/identity/me": "GET", "/identity/scopes": "GET", "/station/health": "GET",
+		"/app-commands":                                   "POST", "/healthz": "GET", "/readyz": "GET", "/identity/bootstrap": "POST", "/identity/login": "POST", "/identity/refresh": "POST", "/identity/logout": "POST", "/identity/me": "GET", "/identity/scopes": "GET", "/station/health": "GET",
 		"/api/v1/resources/gpu": "GET", "/api/v1/resources/node": "GET", "/api/v1/resources/summary": "GET", "/api/v1/resources/workloads": "GET", "/api/v1/resources/workspaces": "GET", "/api/v1/resources/workspaces/release": "POST"}
 	if strings.HasPrefix(r.URL.Path, "/app-operations/") || r.URL.Path == "/catalog/apps" || strings.HasPrefix(r.URL.Path, "/catalog/apps/") {
 		routes[r.URL.Path] = "GET"

@@ -137,7 +137,7 @@ items:
 		t.Fatalf("unexpected blender entry: %+v", blender)
 	}
 	disabled, ok := svc.Entry("image-face-fusion-api")
-	if !ok || disabled.Version != "" || disabled.DisabledReason == "" || disabled.Helm != nil {
+	if !ok || disabled.Version != "0.1.2" || disabled.DisabledReason == "" || disabled.Helm != nil {
 		t.Fatalf("unexpected disabled entry: %+v", disabled)
 	}
 
