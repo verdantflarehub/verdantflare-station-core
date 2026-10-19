@@ -910,6 +910,17 @@
               "maxLength": 128,
               "pattern": "^[^\\s\u0000-\u001f](?:[^\u0000-\u001f]*[^\\s\u0000-\u001f])?$"
             }
+          },
+          "disabledReason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 512
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -920,6 +931,65 @@
           "iconRef",
           "resourceTags",
           "quality"
+        ],
+        "additionalProperties": false
+      },
+      "helm": {
+        "type": "object",
+        "properties": {
+          "ociRef": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "chartName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "chartVersion": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+          },
+          "manifestDigest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "packageDigest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "packageSizeBytes": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "targetNamespace": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "releaseName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "valuesSource": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "required": [
+          "ociRef",
+          "chartName",
+          "chartVersion",
+          "manifestDigest",
+          "packageDigest",
+          "packageSizeBytes",
+          "targetNamespace",
+          "releaseName",
+          "valuesSource"
         ],
         "additionalProperties": false
       },
@@ -952,7 +1022,7 @@
           },
           "appVersion": {
             "type": "string",
-            "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+            "pattern": "^(|(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*))$"
           },
           "releaseDigest": {
             "anyOf": [
@@ -1310,6 +1380,16 @@
           },
           "preinstalled": {
             "type": "boolean"
+          },
+          "helm": {
+            "anyOf": [
+              {
+                "$ref": "station://contracts/appcenter-v1/common#/$defs/helm"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -1572,6 +1652,7 @@
           "image",
           "music",
           "video",
+          "channel",
           "system",
           "desktop",
           "blender"
@@ -1581,8 +1662,88 @@
         "enum": [
           "vf",
           "minimax",
-          "github"
+          "github",
+          "blender",
+          "comfyui"
         ]
+      },
+      "sort_order": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 1000000
+      },
+      "icon_ref": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "description": {
+        "type": "string",
+        "maxLength": 2000
+      },
+      "capabilities": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "disabled_reason": {
+        "type": "string",
+        "maxLength": 512
+      },
+      "helm": {
+        "type": "object",
+        "required": [
+          "oci_ref",
+          "chart_name",
+          "chart_version",
+          "manifest_digest",
+          "package_digest",
+          "package_size_bytes",
+          "target_namespace",
+          "release_name",
+          "values_source"
+        ],
+        "properties": {
+          "oci_ref": {
+            "type": "string",
+            "minLength": 1
+          },
+          "chart_name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "chart_version": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+          },
+          "manifest_digest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "package_digest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "package_size_bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "target_namespace": {
+            "type": "string",
+            "minLength": 1
+          },
+          "release_name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "values_source": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
       },
       "models": {
         "type": "array",
@@ -1605,7 +1766,7 @@
       },
       "version": {
         "type": "string",
-        "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+        "pattern": "^(|(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*))$"
       },
       "images": {
         "type": "array",

@@ -130,9 +130,25 @@ func run() int {
 		return 0
 	}
 	var appCatalog *catalog.Service
-	if path := os.Getenv("STATION_CATALOG_FILE"); path != "" {
+	marketBaseURL := os.Getenv("STATION_MARKET_BASE_URL")
+	catalogPath := os.Getenv("STATION_CATALOG_FILE")
+	if marketBaseURL != "" {
+		loadCtx, stopLoad := context.WithTimeout(ctx, 15*time.Second)
 		var e error
-		appCatalog, e = catalog.Load(path, nil)
+		appCatalog, e = catalog.LoadMarket(loadCtx, catalog.MarketConfig{
+			BaseURL:      marketBaseURL,
+			Token:        os.Getenv("STATION_MARKET_CATALOG_TOKEN"),
+			CacheFile:    os.Getenv("STATION_MARKET_CACHE_FILE"),
+			FallbackFile: catalogPath,
+		}, nil)
+		stopLoad()
+		if e != nil {
+			logger.Error("market_catalog_configuration_invalid", "reason", e.Error())
+			return 1
+		}
+	} else if catalogPath != "" {
+		var e error
+		appCatalog, e = catalog.Load(catalogPath, nil)
 		if e != nil {
 			logger.Error("catalog_configuration_invalid")
 			return 1
@@ -144,7 +160,7 @@ func run() int {
 	appStates := &appstate.Service{Pool: pool, StationID: c.StationID, Catalog: appCatalog}
 	ops.AppStates = appStates
 	appStateCollector, err := appstate.LoadCollectors(os.Getenv("STATION_APP_STATE_COLLECTOR_REGISTRY"), os.Getenv, appStates, []string{
-		c.BootstrapToken, os.Getenv("STATION_APP_TRANSITION_CONTROL_TOKEN"), os.Getenv("STATION_INSTANCE_CONTROL_TOKEN"), os.Getenv("STATION_BLENDER_CONTROL_TOKEN"), os.Getenv("STATION_APP_INSTALLATION_COMFYUI_TOKEN"), os.Getenv("STATION_NETWORK_TOKEN"), os.Getenv("STATION_RESOURCES_TOKEN"),
+		c.BootstrapToken, os.Getenv("STATION_APP_TRANSITION_CONTROL_TOKEN"), os.Getenv("STATION_INSTANCE_CONTROL_TOKEN"), os.Getenv("STATION_BLENDER_CONTROL_TOKEN"), os.Getenv("STATION_APP_INSTALLATION_COMFYUI_TOKEN"), os.Getenv("STATION_NETWORK_TOKEN"), os.Getenv("STATION_RESOURCES_TOKEN"), os.Getenv("STATION_MARKET_CATALOG_TOKEN"),
 	})
 	if err != nil {
 		logger.Error("app_state_collector_configuration_invalid")
@@ -157,6 +173,24 @@ func run() int {
 		if err != nil {
 			logger.Error("app_state_catalog_unavailable")
 			return 1
+		}
+		if marketBaseURL != "" {
+			go func() {
+				ticker := time.NewTicker(30 * time.Second)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-ticker.C:
+						rCtx, cancelRefresh := context.WithTimeout(ctx, 10*time.Second)
+						if err := appCatalog.RefreshMarket(rCtx); err == nil {
+							_ = appStates.SyncCatalog(rCtx, appCatalog.RegisteredAppIDs())
+						}
+						cancelRefresh()
+					}
+				}
+			}()
 		}
 	}
 	legacyCtx, finishLegacy := context.WithTimeout(ctx, 10*time.Second)

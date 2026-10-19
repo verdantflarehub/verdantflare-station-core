@@ -17,17 +17,34 @@ type Image struct {
 	Component string `json:"component"`
 	Image     string `json:"image"`
 }
+type Helm struct {
+	OCIRef           string `json:"oci_ref"`
+	ChartName        string `json:"chart_name"`
+	ChartVersion     string `json:"chart_version"`
+	ManifestDigest   string `json:"manifest_digest"`
+	PackageDigest    string `json:"package_digest"`
+	PackageSizeBytes int64  `json:"package_size_bytes"`
+	TargetNamespace  string `json:"target_namespace"`
+	ReleaseName      string `json:"release_name"`
+	ValuesSource     string `json:"values_source"`
+}
 type Entry struct {
-	AppID        string   `json:"app_id"`
-	DisplayName  string   `json:"display_name"`
-	GroupID      string   `json:"group_id"`
-	Brand        string   `json:"brand"`
-	Models       []string `json:"models"`
-	Source       string   `json:"source"`
-	Namespace    string   `json:"namespace"`
-	WorkloadName string   `json:"workload_name"`
-	Version      string   `json:"version"`
-	Images       []Image  `json:"images"`
+	AppID          string   `json:"app_id"`
+	DisplayName    string   `json:"display_name"`
+	GroupID        string   `json:"group_id"`
+	Brand          string   `json:"brand"`
+	SortOrder      int      `json:"sort_order,omitempty"`
+	IconRef        string   `json:"icon_ref,omitempty"`
+	Description    string   `json:"description,omitempty"`
+	Capabilities   []string `json:"capabilities,omitempty"`
+	DisabledReason string   `json:"disabled_reason,omitempty"`
+	Helm           *Helm    `json:"helm,omitempty"`
+	Models         []string `json:"models"`
+	Source         string   `json:"source"`
+	Namespace      string   `json:"namespace"`
+	WorkloadName   string   `json:"workload_name"`
+	Version        string   `json:"version"`
+	Images         []Image  `json:"images"`
 }
 type Observation struct {
 	UID              string            `json:"uid,omitempty"`
@@ -60,9 +77,19 @@ type Reader interface {
 	Observe(context.Context, Entry) Observation
 }
 type Service struct {
-	entries    []Entry
-	reader     Reader
-	discoverer Discoverer
+	mu           sync.RWMutex
+	entries      []Entry
+	reader       Reader
+	discoverer   Discoverer
+	marketCfg    *MarketConfig
+	marketETag   string
+	versionCache map[string]marketAppVersion
+}
+
+func (s *Service) setEntries(entries []Entry) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.entries = entries
 }
 
 // Entry returns registered release metadata without observing any workload.
@@ -81,10 +108,19 @@ func (s *Service) Entries() []Entry {
 	if s == nil {
 		return nil
 	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	entries := make([]Entry, len(s.entries))
 	for i, entry := range s.entries {
 		entry.Models = append([]string{}, entry.Models...)
+		if entry.Capabilities != nil {
+			entry.Capabilities = append([]string{}, entry.Capabilities...)
+		}
 		entry.Images = append([]Image{}, entry.Images...)
+		if entry.Helm != nil {
+			cp := *entry.Helm
+			entry.Helm = &cp
+		}
 		entries[i] = entry
 	}
 	return entries
@@ -93,6 +129,11 @@ func (s *Service) Entries() []Entry {
 // RegisteredAppIDs reads the trusted in-process configuration only. It must
 // never invoke workload discovery while seeding the Core state read model.
 func (s *Service) RegisteredAppIDs() []string {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	ids := make([]string, 0, len(s.entries))
 	for _, entry := range s.entries {
 		ids = append(ids, entry.AppID)
@@ -102,6 +143,7 @@ func (s *Service) RegisteredAppIDs() []string {
 
 var dnsName = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
 var version = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
+var digestPattern = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
 
 func Load(path string, reader Reader) (*Service, error) {
 	f, err := os.Open(path)
@@ -121,7 +163,7 @@ func Load(path string, reader Reader) (*Service, error) {
 	ids, targets := map[string]bool{}, map[string]bool{}
 	for _, e := range entries {
 		target := e.Namespace + "/" + e.WorkloadName
-		if !dnsName.MatchString(e.AppID) || len(e.AppID) > 63 || !dnsName.MatchString(e.Namespace) || len(e.Namespace) > 63 || !dnsName.MatchString(e.WorkloadName) || len(e.WorkloadName) > 63 || e.DisplayName == "" || !ValidGroup(e.GroupID) || !version.MatchString(e.Version) || (e.Brand != "vf" && e.Brand != "minimax" && e.Brand != "github") || e.Models == nil || len(e.Images) == 0 || !strings.HasPrefix(e.Source, "deploys/") || strings.Contains(e.Source, "..") || ids[e.AppID] || targets[target] {
+		if !dnsName.MatchString(e.AppID) || len(e.AppID) > 63 || !dnsName.MatchString(e.Namespace) || len(e.Namespace) > 63 || !dnsName.MatchString(e.WorkloadName) || len(e.WorkloadName) > 63 || e.DisplayName == "" || !ValidGroup(e.GroupID) || (e.Version != "" && !version.MatchString(e.Version)) || (e.Version == "" && e.DisabledReason == "") || !ValidBrand(e.Brand) || e.Models == nil || len(e.Images) == 0 || !strings.HasPrefix(e.Source, "deploys/") || strings.Contains(e.Source, "..") || ids[e.AppID] || targets[target] {
 			return nil, errors.New("invalid catalog entry")
 		}
 		for _, im := range e.Images {
@@ -136,10 +178,13 @@ func Load(path string, reader Reader) (*Service, error) {
 	if d, ok := reader.(Discoverer); ok {
 		disc = d
 	}
-	return &Service{entries, reader, disc}, nil
+	return &Service{entries: entries, reader: reader, discoverer: disc}, nil
 }
 func ValidGroup(group string) bool {
-	return group == "image" || group == "music" || group == "video" || group == "system" || group == "desktop" || group == "blender"
+	return group == "image" || group == "music" || group == "video" || group == "channel" || group == "system" || group == "desktop" || group == "blender"
+}
+func ValidBrand(brand string) bool {
+	return brand == "vf" || brand == "minimax" || brand == "github" || brand == "blender" || brand == "comfyui"
 }
 func (s *Service) observe(ctx context.Context, e Entry) Item {
 	obs := Observation{State: "unknown", Reason: "unavailable", ObservedAt: time.Now().UTC(), Images: []Image{}}
@@ -154,7 +199,7 @@ func (s *Service) observe(ctx context.Context, e Entry) Item {
 }
 func (s *Service) List(ctx context.Context, group string) []Item {
 	entries := []Entry{}
-	for _, e := range s.entries {
+	for _, e := range s.Entries() {
 		if group == "" || e.GroupID == group {
 			entries = append(entries, e)
 		}
@@ -200,7 +245,7 @@ func (s *Service) List(ctx context.Context, group string) []Item {
 	return out
 }
 func (s *Service) Get(ctx context.Context, id string) (Item, bool) {
-	for _, e := range s.entries {
+	for _, e := range s.Entries() {
 		if e.AppID == id {
 			it := s.observe(ctx, e)
 			if (it.Deployment.State == "not_installed" || it.Deployment.State == "unknown") && s.discoverer != nil {

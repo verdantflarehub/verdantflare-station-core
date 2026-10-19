@@ -90,14 +90,32 @@ func validateLegacy(station string, bindings []legacyBinding, entries []catalog.
 	for i := range bindings {
 		b := &bindings[i]
 		e, exists := registry[b.AppID]
-		key := e.Namespace + "/" + e.WorkloadName
+		matchedNS, matchedName := e.Namespace, e.WorkloadName
+		if exists && b.ObservationKey != "obs:"+appcenter.Digest([]string{matchedNS, matchedName, b.WorkloadUID})[7:] && e.Namespace == "verdantflare-app" {
+			legacyCandidates := [][2]string{}
+			switch e.AppID {
+			case "image-mcp":
+				legacyCandidates = append(legacyCandidates, [2]string{"verdantflare-image", "image-mcp-server"})
+			case "video-mcp":
+				legacyCandidates = append(legacyCandidates, [2]string{"verdantflare-video", "video-mcp-server"})
+			case "blender":
+				legacyCandidates = append(legacyCandidates, [2]string{"verdantflare-app", "blender"}, [2]string{"verdantflare-blender", "blender"})
+			}
+			for _, cand := range legacyCandidates {
+				if b.ObservationKey == "obs:"+appcenter.Digest([]string{cand[0], cand[1], b.WorkloadUID})[7:] {
+					matchedNS, matchedName = cand[0], cand[1]
+					break
+				}
+			}
+		}
+		key := matchedNS + "/" + matchedName
 		if !exists || b.BindingID == "" || seenIDs[b.BindingID] || seenApps[b.AppID] || seenPositions[key] || seenUIDs[b.WorkloadUID] ||
 			b.StationID != station || !validID(b.OrganizationID) || !validID(b.WorkloadUID) ||
-			!dns(e.Namespace) || !dns(e.WorkloadName) ||
-			b.ObservationKey != "obs:"+appcenter.Digest([]string{e.Namespace, e.WorkloadName, b.WorkloadUID})[7:] {
+			!dns(matchedNS) || !dns(matchedName) ||
+			b.ObservationKey != "obs:"+appcenter.Digest([]string{matchedNS, matchedName, b.WorkloadUID})[7:] {
 			return nil, ErrStreamFrame
 		}
-		b.namespace, b.name = e.Namespace, e.WorkloadName
+		b.namespace, b.name = matchedNS, matchedName
 		seenIDs[b.BindingID], seenApps[b.AppID], seenPositions[key], seenUIDs[b.WorkloadUID] = true, true, true, true
 	}
 	sort.Slice(bindings, func(i, j int) bool { return bindings[i].AppID < bindings[j].AppID })
