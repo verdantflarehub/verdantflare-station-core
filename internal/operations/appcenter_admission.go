@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/appcenter"
+	"github.com/verdantflarehub/verdantflare-station-core/internal/catalog"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/identity"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/releasebinding"
 	pb "github.com/verdantflarehub/verdantflare-station-core/internal/runtimev1"
@@ -35,6 +36,7 @@ type AppCenterReleasePolicy struct {
 // browser request nor the catalog chooses a source path, key, or RPC endpoint.
 type AppCenterAdmissionSource struct {
 	Path       string
+	Catalog    *catalog.Service
 	Signed     *releasebinding.Source
 	Management *TransitionReleases
 	Dashboard  *DashboardReleases
@@ -114,6 +116,32 @@ func (s *AppCenterAdmissionSource) resolve(ctx context.Context, actor identity.I
 		}
 	} else {
 		return zero, ErrAppCenterUnsupported
+	}
+	if s != nil && s.Catalog != nil {
+		if helm, ok := s.Catalog.ResolveHelm(ctx, command.AppID, command.AppVersion); ok {
+			policy := AppCenterReleasePolicy{
+				AppID:       command.AppID,
+				AppVersion:  command.AppVersion,
+				ReleaseKind: "oci-chart",
+				ReleaseRef:  helm.ChartName + "-" + helm.ChartVersion,
+				Actions:     []string{"delete", "install", "restart", "start", "stop"},
+			}
+			execution := AppCenterExecution{
+				SchemaVersion:  1,
+				AppID:          command.AppID,
+				AppVersion:     command.AppVersion,
+				Action:         command.Action,
+				ReleaseDigest:  helm.ManifestDigest,
+				TemplateDigest: helm.PackageDigest,
+			}
+			execution.PolicyRevision = appcenter.Digest(struct {
+				Protocol          string
+				Policy            AppCenterReleasePolicy
+				Release, Template string
+			}{
+				"studio.appcenter.admission.v1", policy, execution.ReleaseDigest, execution.TemplateDigest})
+			return execution, nil
+		}
 	}
 	policies, err := s.policies(ctx)
 	if err != nil {

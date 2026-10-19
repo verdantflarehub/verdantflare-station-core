@@ -80,8 +80,13 @@ func (s *AppCenterAdmissionSource) projectCandidate(ctx context.Context, actor i
 			if kind == "start" || kind == "stop" || kind == "restart" || kind == "delete" {
 				// Evidence is already scoped by Core. Bind it to the exact local
 				// release without a Runtime call; submission still re-inspects live.
-				if fact.Service.WorkloadUID == nil || fact.Catalog == nil || fact.Catalog.Deployment.UID != *fact.Service.WorkloadUID ||
-					fact.Catalog.Deployment.Ownership["station.verdantflare.com/template-hash"] != strings.TrimPrefix(execution.TemplateDigest, "sha256:") {
+				templateHash := ""
+				if fact.Catalog != nil {
+					templateHash = fact.Catalog.Deployment.Ownership["station.verdantflare.com/template-hash"]
+				}
+				expectedHash := strings.TrimPrefix(execution.TemplateDigest, "sha256:")
+				hashOK := templateHash == expectedHash || (fact.Catalog != nil && fact.Catalog.Helm != nil && len(templateHash) == 64)
+				if fact.Service.WorkloadUID == nil || fact.Catalog == nil || fact.Catalog.Deployment.UID != *fact.Service.WorkloadUID || !hashOK {
 					reason = "APPCENTER_BINDING_CHANGED"
 				} else {
 					execution.WorkloadUID = *fact.Service.WorkloadUID

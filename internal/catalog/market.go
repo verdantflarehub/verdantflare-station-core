@@ -343,6 +343,46 @@ func (s *Service) fetchMarketVersion(ctx context.Context, appID, ver string) (ma
 	return out, nil
 }
 
+func (s *Service) ResolveHelm(ctx context.Context, appID, appVersion string) (*Helm, bool) {
+	if s == nil || appID == "" || appVersion == "" {
+		return nil, false
+	}
+	s.mu.RLock()
+	for _, entry := range s.entries {
+		if entry.AppID == appID && entry.Version == appVersion && entry.Helm != nil &&
+			digestPattern.MatchString(entry.Helm.ManifestDigest) && digestPattern.MatchString(entry.Helm.PackageDigest) {
+			clone := *entry.Helm
+			s.mu.RUnlock()
+			return &clone, true
+		}
+	}
+	hasMarketCfg := s.marketCfg != nil
+	s.mu.RUnlock()
+	if !hasMarketCfg {
+		return nil, false
+	}
+	appVer, err := s.fetchMarketVersion(ctx, appID, appVersion)
+	if err != nil || appVer.Chart == nil || appVer.Chart.OCIRef == "" || appVer.Chart.Version == "" ||
+		!digestPattern.MatchString(appVer.Chart.ManifestDigest) || !digestPattern.MatchString(appVer.Chart.PackageDigest) {
+		return nil, false
+	}
+	chartName := appVer.Chart.Name
+	if chartName == "" {
+		chartName = appID
+	}
+	return &Helm{
+		OCIRef:           appVer.Chart.OCIRef,
+		ChartName:        chartName,
+		ChartVersion:     appVer.Chart.Version,
+		ManifestDigest:   appVer.Chart.ManifestDigest,
+		PackageDigest:    appVer.Chart.PackageDigest,
+		PackageSizeBytes: appVer.Chart.PackageSizeBytes,
+		TargetNamespace:  "verdantflare-app",
+		ReleaseName:      appID,
+		ValuesSource:     defaultValuesSource(appID),
+	}, true
+}
+
 func loadEntriesFile(path string) ([]Entry, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
