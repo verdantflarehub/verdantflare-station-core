@@ -13,7 +13,6 @@ import (
 	"github.com/verdantflarehub/verdantflare-station-core/internal/appcenter"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/catalog"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/identity"
-	"github.com/verdantflarehub/verdantflare-station-core/internal/releasebinding"
 	pb "github.com/verdantflarehub/verdantflare-station-core/internal/runtimev1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -33,11 +32,10 @@ type AppCenterReleasePolicy struct {
 }
 
 // Configuration and original release bytes are operator-controlled. Neither a
-// browser request nor the catalog chooses a source path, key, or RPC endpoint.
+// browser request nor the catalog chooses a source path or RPC endpoint.
 type AppCenterAdmissionSource struct {
 	Path       string
 	Catalog    *catalog.Service
-	Signed     *releasebinding.Source
 	Management *TransitionReleases
 	Dashboard  *DashboardReleases
 	Runtime    pb.AppCenterRuntimeClient
@@ -73,7 +71,7 @@ func (s *AppCenterAdmissionSource) policies(ctx context.Context) ([]AppCenterRel
 	for _, p := range cfg.Releases {
 		key := p.AppID + "@" + p.AppVersion
 		if !appCenterAppName.MatchString(p.AppID) || len(p.AppVersion) > 64 || !appCenterVersion.MatchString(p.AppVersion) ||
-			!slices.Contains([]string{"signed-package", "management-release", "dashboard-release"}, p.ReleaseKind) || !transitionName.MatchString(p.ReleaseRef) ||
+			!slices.Contains([]string{"management-release", "dashboard-release"}, p.ReleaseKind) || !transitionName.MatchString(p.ReleaseRef) ||
 			len(p.Actions) == 0 || len(p.Actions) > 5 || seen[key] {
 			return nil, ErrAppCenterRelease
 		}
@@ -188,16 +186,6 @@ func (s *AppCenterAdmissionSource) resolve(ctx context.Context, actor identity.I
 	slices.Sort(policy.Actions)
 	execution := AppCenterExecution{SchemaVersion: 1, AppID: policy.AppID, AppVersion: policy.AppVersion, Action: command.Action}
 	switch policy.ReleaseKind {
-	case "signed-package":
-		binding, err := s.Signed.Resolve(policy.ReleaseRef)
-		if err != nil || binding.AppID != policy.AppID || binding.AppVersion != policy.AppVersion {
-			return zero, ErrAppCenterRelease
-		}
-		execution.ReleaseDigest = appcenter.Digest(struct {
-			Protocol string
-			Binding  releasebinding.Binding
-		}{"studio.appcenter.signed-release.v1", binding})
-		execution.TemplateDigest = binding.TemplateDigest
 	case "management-release":
 		snapshot, err := s.Management.Resolve(ctx, policy.AppID, policy.AppVersion, policy.ReleaseRef)
 		if err != nil {

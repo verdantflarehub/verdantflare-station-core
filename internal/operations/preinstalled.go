@@ -183,7 +183,7 @@ func bindPreinstalled(ctx context.Context, tx pgx.Tx, operation, installation st
 		return err
 	}
 	if installedVersion != binding.AppVersion {
-		// Signed adoption of an unbound legacy installation was checked during
+		// Registered adoption of an unbound legacy installation was checked during
 		// reservation. Keep its old version and binding until Runtime succeeds.
 		return nil
 	}

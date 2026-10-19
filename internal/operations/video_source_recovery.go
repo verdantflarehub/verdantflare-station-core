@@ -6,7 +6,7 @@ import (
 	"github.com/verdantflarehub/verdantflare-station-core/internal/releasebinding"
 )
 
-// These immutable signed materials identify the historical Video drift recovery.
+// These immutable registered materials identify the historical Video drift recovery.
 // This is not an upgrade policy: Runtime must still verify the existing workload.
 func videoSourceRecovery(from, to releasebinding.Binding, action, state string) bool {
 	return action == "adopt" && state == "installed" && from == videoOriginalSource() && to == videoObservedSource()
@@ -52,7 +52,7 @@ func videoFalEgressObservedSource() releasebinding.Binding {
 	}
 }
 
-// A signed source can lag the installed version after a completed managed
+// A registered source can lag the installed version after a completed managed
 // transition. Only this exact historical chain authorizes the new adoption.
 func videoInstalledSourceRecovery(ctx context.Context, tx pgx.Tx, installation, installed string, from, to releasebinding.Binding, action, state string) bool {
 	if from.AppVersion == installed && videoSourceRecovery(from, to, action, state) {

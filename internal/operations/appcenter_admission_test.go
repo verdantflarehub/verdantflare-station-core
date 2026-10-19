@@ -2,21 +2,15 @@ package operations
 
 import (
 	"context"
-	"crypto/ed25519"
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
-	"github.com/verdantflarehub/verdantflare-station-core/internal/appcenter"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/identity"
-	"github.com/verdantflarehub/verdantflare-station-core/internal/releasebinding"
 	pb "github.com/verdantflarehub/verdantflare-station-core/internal/runtimev1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -149,40 +143,11 @@ func TestAppCenterAdmissionRejectsInvalidTrustIdentityAndProtocol(t *testing.T) 
 	}
 }
 
-func TestAppCenterAdmissionSignedPackage(t *testing.T) {
+func TestAppCenterAdmissionRejectsRemovedSignedPackageKind(t *testing.T) {
 	s, actor, installed, policy, runtime := admissionFixture(t)
-	root := t.TempDir()
-	pub, private, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	manifest, chart := []byte("original package"), []byte("original chart")
-	binding := releasebinding.Binding{ReleaseRef: "signed-app", AppID: installed.AppID, AppVersion: installed.AppVersion, PackageDigest: materialDigest(manifest), ChartDigest: materialDigest(chart), TemplateDigest: "sha256:" + strings.Repeat("c", 64)}
-	now := time.Now().UTC()
-	payload, _ := json.Marshal(releasebinding.SignedRelease{SchemaVersion: 1, Binding: binding, NotBefore: now.Add(-time.Hour).Format(time.RFC3339), ExpiresAt: now.Add(time.Hour).Format(time.RFC3339)})
-	signature := ed25519.Sign(private, append([]byte("verdantflare.preinstalled.release.v1\n"), payload...))
-	raw, _ := json.Marshal(map[string]any{"schemaVersion": 1, "keys": map[string]string{"publisher": base64.StdEncoding.EncodeToString(pub)}, "releases": []any{map[string]any{
-		"releaseRef": binding.ReleaseRef, "payload": base64.StdEncoding.EncodeToString(payload), "signature": base64.StdEncoding.EncodeToString(signature), "keyId": "publisher", "packageRef": "package.json", "chartRef": "chart.tgz"}}})
-	for name, data := range map[string][]byte{"registry.json": raw, "package.json": manifest, "chart.tgz": chart} {
-		if err := os.WriteFile(filepath.Join(root, name), data, 0600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	s.Signed = &releasebinding.Source{Path: filepath.Join(root, "registry.json")}
-	policy.ReleaseKind, policy.ReleaseRef = "signed-package", binding.ReleaseRef
+	policy.ReleaseKind = "signed-package"
 	writeCommandPolicies(t, s, true, []AppCenterReleasePolicy{policy})
-	command := admissionCommand(actor, installed, "start")
-	out, err := s.Read(context.Background(), actor, command, &installed)
-	want := appcenter.Digest(struct {
-		Protocol string
-		Binding  releasebinding.Binding
-	}{"studio.appcenter.signed-release.v1", binding})
-	if err != nil || out.Execution.ReleaseDigest != want || out.Execution.TemplateDigest != binding.TemplateDigest {
-		t.Fatal(out, err)
-	}
-	before := runtime.calls
-	os.WriteFile(filepath.Join(root, "chart.tgz"), []byte("changed"), 0600)
-	if _, err := s.Read(context.Background(), actor, command, &installed); !errors.Is(err, ErrAppCenterRelease) || runtime.calls != before {
-		t.Fatal("tampered signed package admitted", err)
+	if _, err := s.Read(context.Background(), actor, admissionCommand(actor, installed, "start"), &installed); !errors.Is(err, ErrAppCenterRelease) || runtime.calls != 0 {
+		t.Fatal("removed signed-package kind admitted", err)
 	}
 }

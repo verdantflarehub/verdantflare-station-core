@@ -2,10 +2,7 @@ package operations
 
 import (
 	"context"
-	"crypto/ed25519"
-	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -78,16 +75,7 @@ func preinstalledDatabaseFixture(t *testing.T) *preinstalledDatabase {
 	digest := func(raw []byte) string { h := sha256.Sum256(raw); return "sha256:" + hex.EncodeToString(h[:]) }
 	packageBytes, chartBytes := []byte(`{"appId":"test-app","version":"1.0.0"}`), []byte("controlled test chart bytes")
 	binding := releasebinding.Binding{ReleaseRef: "test-app-v1", AppID: "test-app", AppVersion: "1.0.0", PackageDigest: digest(packageBytes), ChartDigest: digest(chartBytes), TemplateDigest: "sha256:" + strings.Repeat("c", 64)}
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	payload, err := json.Marshal(releasebinding.SignedRelease{SchemaVersion: 1, Binding: binding, NotBefore: time.Now().Add(-time.Hour).UTC().Format(time.RFC3339), ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	signature := ed25519.Sign(priv, append([]byte("verdantflare.preinstalled.release.v1\n"), payload...))
-	raw, err := json.Marshal(map[string]any{"schemaVersion": 1, "keys": map[string]string{"test-key": base64.StdEncoding.EncodeToString(pub)}, "releases": []any{map[string]string{"releaseRef": binding.ReleaseRef, "payload": base64.StdEncoding.EncodeToString(payload), "signature": base64.StdEncoding.EncodeToString(signature), "keyId": "test-key", "packageRef": "package.json", "chartRef": "chart.tgz"}}})
+	raw, err := json.Marshal(releasebinding.Registry{SchemaVersion: releasebinding.SchemaVersion, Releases: []releasebinding.Entry{{Binding: binding, PackageRef: "package.json", ChartRef: "chart.tgz"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +210,7 @@ func TestPreinstalledDatabaseTransactionalBindingAndRecovery(t *testing.T) {
 	if _, err = f.service.SubmitPreinstalled(ctx, f.actor, changed); !errors.Is(err, identity.Conflict) {
 		t.Fatal("changed payload reused idempotency key", err)
 	}
-	if err = os.WriteFile(f.registry, []byte(`{"schemaVersion":1,"keys":{},"releases":[]}`), 0600); err != nil {
+	if err = os.WriteFile(f.registry, []byte(`{"schemaVersion":2,"releases":[]}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	withdrawn := f.command(t, "preinstalled-withdrawn")
@@ -370,7 +358,7 @@ func TestPreinstalledDatabaseLegacyVersionAdoptionDefersBinding(t *testing.T) {
 	command := f.command(t, "legacy-version-adopt")
 	command.Command.Action, command.Command.ExpectedWorkloadUID = "adopt", uid
 	if _, err := f.service.Submit(ctx, f.actor, command.Command); !errors.Is(err, identity.Conflict) {
-		t.Fatal("unsigned adoption accepted", err)
+		t.Fatal("unregistered adoption accepted", err)
 	}
 	first, err := f.service.SubmitPreinstalled(ctx, f.actor, command)
 	if err != nil {
@@ -459,7 +447,7 @@ func TestPreinstalledDatabaseMemoryInventoryAndDurableRevision(t *testing.T) {
 }
 
 // This transaction-level test seeds historical metadata only in a disposable DB.
-// Admission signature/inventory checks remain covered by the service tests above.
+// Admission registry/inventory checks remain covered by the service tests above.
 func TestPreinstalledDatabaseVideoSourceRecoveryTransaction(t *testing.T) {
 	f := preinstalledDatabaseFixture(t)
 	ctx := context.Background()
@@ -514,7 +502,7 @@ func TestPreinstalledDatabaseVideoSourceRecoveryTransaction(t *testing.T) {
 	}
 	defer tx.Rollback(ctx)
 	if _, err = reserveInstallation(ctx, tx, f.actor, c, nil); !errors.Is(err, identity.Conflict) {
-		t.Fatal("unsigned recovery admitted", err)
+		t.Fatal("unregistered recovery admitted", err)
 	}
 	gotID, err := reserveInstallation(ctx, tx, f.actor, c, &PreinstalledCommand{Command: c, Release: to})
 	if err != nil || gotID != id {
@@ -580,7 +568,7 @@ func TestPreinstalledDatabaseVideoSourceRecoveryTransaction(t *testing.T) {
 	}
 	var original releasebinding.Binding
 	if json.Unmarshal(history, &original) != nil || original != from {
-		t.Fatal("original signed history replaced")
+		t.Fatal("original registered history replaced")
 	}
 }
 
@@ -642,7 +630,7 @@ func TestPreinstalledDatabaseVideoParallelSourceRecoveryTransaction(t *testing.T
 	}
 	defer tx.Rollback(ctx)
 	if _, err = reserveInstallation(ctx, tx, f.actor, c, nil); !errors.Is(err, identity.Conflict) {
-		t.Fatal("unsigned recovery admitted", err)
+		t.Fatal("unregistered recovery admitted", err)
 	}
 
 	if _, err = reserveInstallation(ctx, tx, f.actor, c, &PreinstalledCommand{Command: c, Release: to}); !errors.Is(err, identity.Conflict) {
@@ -724,7 +712,7 @@ func TestPreinstalledDatabaseVideoParallelSourceRecoveryTransaction(t *testing.T
 	}
 	var original releasebinding.Binding
 	if json.Unmarshal(history, &original) != nil || original != from {
-		t.Fatal("original signed history replaced")
+		t.Fatal("original registered history replaced")
 	}
 	if _, err = f.service.Pool.Exec(ctx, `UPDATE station.app_installations SET app_version='0.17.37',revision=revision+1 WHERE installation_id=$1`, id); err != nil {
 		t.Fatal(err)

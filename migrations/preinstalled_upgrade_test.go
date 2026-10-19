@@ -8,7 +8,7 @@ import (
 )
 
 // Upgrading the published schema must retain historical operations without
-// manufacturing an installation identity or a signed release binding for them.
+// manufacturing an installation identity or a registered release binding for them.
 func TestPreinstalledUpgradePreservesUnboundHistory(t *testing.T) {
 	ctx := t.Context()
 	pool := testdb.New(t)

@@ -97,8 +97,8 @@ func installationState(current, action, result string) string {
 // Legacy operations with no bound identity are intentionally not backfilled.
 func recordInstallationProgress(ctx context.Context, tx pgx.Tx, operationID, action, result string) error {
 	var id, state, installedVersion, observedVersion string
-	var signedAdoption bool
-	err := tx.QueryRow(ctx, `SELECT i.installation_id::text,i.state,i.app_version,o.app_version,EXISTS(SELECT 1 FROM station.preinstalled_operation_bindings b WHERE b.operation_id=o.operation_id) FROM station.app_installations i JOIN station.app_operations o ON o.installation_id=i.installation_id WHERE o.operation_id=$1 AND i.last_operation_id=o.operation_id FOR UPDATE OF i`, operationID).Scan(&id, &state, &installedVersion, &observedVersion, &signedAdoption)
+	var boundAdoption bool
+	err := tx.QueryRow(ctx, `SELECT i.installation_id::text,i.state,i.app_version,o.app_version,EXISTS(SELECT 1 FROM station.preinstalled_operation_bindings b WHERE b.operation_id=o.operation_id) FROM station.app_installations i JOIN station.app_operations o ON o.installation_id=i.installation_id WHERE o.operation_id=$1 AND i.last_operation_id=o.operation_id FOR UPDATE OF i`, operationID).Scan(&id, &state, &installedVersion, &observedVersion, &boundAdoption)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
@@ -106,11 +106,11 @@ func recordInstallationProgress(ctx context.Context, tx pgx.Tx, operationID, act
 		return err
 	}
 	if installedVersion != observedVersion && result == "succeeded" {
-		if action == "upgrade" && state == "installed" && !signedAdoption {
+		if action == "upgrade" && state == "installed" && !boundAdoption {
 			_, e := tx.Exec(ctx, `UPDATE station.app_installations SET app_version=$2,state='installed',revision=revision+1,updated_at=now() WHERE installation_id=$1`, id, observedVersion)
 			return e
 		}
-		if !legacyVersionAdoption(signedAdoption, action, state, false) {
+		if !legacyVersionAdoption(boundAdoption, action, state, false) {
 			return identity.Conflict
 		}
 		// The operation was admitted against the inventory revision and Runtime
