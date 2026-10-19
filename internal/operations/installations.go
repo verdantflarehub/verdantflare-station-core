@@ -35,7 +35,7 @@ func reserveInstallation(ctx context.Context, tx pgx.Tx, user identity.IdentityC
 	var bound bool
 	err := tx.QueryRow(ctx, `SELECT installation_id::text,organization_id::text,app_version,state,EXISTS(SELECT 1 FROM station.preinstalled_installation_bindings b WHERE b.installation_id=station.app_installations.installation_id) FROM station.app_installations WHERE station_id=$1 AND app_id=$2 AND state <> 'removed' FOR UPDATE`, c.StationID, c.AppID).Scan(&id, &org, &installedVersion, &state, &bound)
 	if err == nil {
-		allowed := legacyVersionAdoption(preinstalled != nil, c.Action, state, bound)
+		allowed := legacyVersionAdoption(preinstalled != nil, c.Action, state, bound) || (preinstalled == nil && c.Action == "upgrade" && state == "installed")
 		if preinstalled != nil && bound && installedVersion != c.AppVersion {
 			var raw []byte
 			if err := tx.QueryRow(ctx, `SELECT binding FROM station.preinstalled_installation_bindings WHERE installation_id=$1`, id).Scan(&raw); err != nil {
@@ -83,7 +83,7 @@ func installationState(current, action, result string) string {
 		switch action {
 		case "delete":
 			return "removed"
-		case "install", "start", "restart", "adopt", "stop":
+		case "install", "upgrade", "start", "restart", "adopt", "stop":
 			return "installed"
 		}
 	}
@@ -106,6 +106,10 @@ func recordInstallationProgress(ctx context.Context, tx pgx.Tx, operationID, act
 		return err
 	}
 	if installedVersion != observedVersion && result == "succeeded" {
+		if action == "upgrade" && state == "installed" && !signedAdoption {
+			_, e := tx.Exec(ctx, `UPDATE station.app_installations SET app_version=$2,state='installed',revision=revision+1,updated_at=now() WHERE installation_id=$1`, id, observedVersion)
+			return e
+		}
 		if !legacyVersionAdoption(signedAdoption, action, state, false) {
 			return identity.Conflict
 		}

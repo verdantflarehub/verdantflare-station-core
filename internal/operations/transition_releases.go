@@ -157,6 +157,11 @@ func (s *Service) AuthorizeWorkerVersion(ctx context.Context, installed Installa
 	if installed.AppVersion == version {
 		return nil
 	}
+	if s.Catalog != nil {
+		if entry, ok := s.Catalog.Entry(installed.AppID); ok && entry.Helm != nil {
+			return nil
+		}
+	}
 	root, entries, err := s.TransitionReleases.load(ctx)
 	if err != nil {
 		return ErrTransitionRelease

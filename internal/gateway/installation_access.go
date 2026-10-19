@@ -23,6 +23,7 @@ type InstallationAccess struct {
 	manager      func(context.Context, string, string, func(context.Context) error) error
 	installation func(context.Context, identity.IdentityContext, string) (operations.Installation, error)
 	worker       func(context.Context, operations.Installation, string) error
+	catalog      func(context.Context, string) bool
 }
 
 func LoadInstallationAccess(path string, lookup func(string) string, service *identity.Service, ops *operations.Service) (*InstallationAccess, error) {
@@ -44,7 +45,14 @@ func LoadInstallationAccess(path string, lookup func(string) string, service *id
 	if strictjson.Decode(f, 64<<10, &entries) != nil || len(entries) == 0 || len(entries) > 128 {
 		return nil, errors.New("invalid installation access registry")
 	}
-	out := &InstallationAccess{callers: map[[32]byte]string{}, manager: service.WithManager, installation: ops.GetInstallation, worker: ops.AuthorizeWorkerVersion}
+	out := &InstallationAccess{callers: map[[32]byte]string{}, manager: service.WithManager, installation: ops.GetInstallation, worker: ops.AuthorizeWorkerVersion,
+		catalog: func(_ context.Context, appID string) bool {
+			if ops.Catalog == nil {
+				return false
+			}
+			entry, ok := ops.Catalog.Entry(appID)
+			return ok && entry.Helm != nil
+		}}
 	seen := map[string]bool{}
 	for _, entry := range entries {
 		if !regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`).MatchString(entry.AppID) || seen[entry.AppID] ||
@@ -141,7 +149,9 @@ func (s *Server) installationAccess(w http.ResponseWriter, r *http.Request, requ
 			return a.worker(ctx, item, in.AppVersion)
 		}
 		if item.AppVersion != in.AppVersion {
-			return identity.Denied
+			if a.catalog == nil || !a.catalog(ctx, app) {
+				return identity.Denied
+			}
 		}
 		return nil
 	})
@@ -154,9 +164,10 @@ func (s *Server) installationAccess(w http.ResponseWriter, r *http.Request, requ
 		return
 	}
 	out := map[string]any{"schema_version": 1, "installation_id": item.InstallationID, "app_id": app,
-		"app_version": item.AppVersion, "station_id": item.StationID, "organization_id": org, "user_id": user,
+		"app_version": in.AppVersion, "station_id": item.StationID, "organization_id": org, "user_id": user,
 		"installation_revision": item.Revision, "request_id": requestID}
 	if worker {
+		out["app_version"] = item.AppVersion
 		out["worker_version"] = in.AppVersion
 	}
 	reply(w, 200, out)

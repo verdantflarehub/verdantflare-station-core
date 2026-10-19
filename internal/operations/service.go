@@ -71,7 +71,7 @@ func (s *Service) submit(ctx context.Context, u identity.IdentityContext, c Comm
 	if c.StationID != s.StationID || c.OrganizationID != u.OrganizationID || len(c.IdempotencyKey) < 8 || len(c.IdempotencyKey) > 128 {
 		return o, identity.Invalid
 	}
-	if c.Action != "install" && c.Action != "start" && c.Action != "stop" && c.Action != "restart" && c.Action != "delete" && c.Action != "adopt" {
+	if c.Action != "install" && c.Action != "upgrade" && c.Action != "start" && c.Action != "stop" && c.Action != "restart" && c.Action != "delete" && c.Action != "adopt" {
 		return o, identity.Invalid
 	}
 	if c.Action == "adopt" {

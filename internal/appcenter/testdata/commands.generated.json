@@ -97,8 +97,8 @@
     }
   },
   {
-    "name": "upgrade-outside-wrapper",
-    "valid": false,
+    "name": "installed-upgrade",
+    "valid": true,
     "input": {
       "schemaVersion": 1,
       "command": {

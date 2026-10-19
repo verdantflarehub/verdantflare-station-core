@@ -101,6 +101,14 @@ func validateAppCenterInstallation(ctx context.Context, tx pgx.Tx, actor identit
 		}
 		return nil, nil
 	}
+	if in.Command.Action == "upgrade" {
+		if err != nil || in.Expected.InstallationID == nil || in.Expected.InstallationRevision == nil ||
+			i.InstallationID != *in.Expected.InstallationID || i.Revision != *in.Expected.InstallationRevision ||
+			i.AppVersion == in.Expected.AppVersion || i.OrganizationID != actor.OrganizationID || i.State != "installed" {
+			return nil, ErrAppCenterBinding
+		}
+		return &i, nil
+	}
 	if err != nil || in.Expected.InstallationID == nil || in.Expected.InstallationRevision == nil ||
 		i.InstallationID != *in.Expected.InstallationID || i.Revision != *in.Expected.InstallationRevision ||
 		i.AppVersion != in.Expected.AppVersion || i.OrganizationID != actor.OrganizationID || i.State != "installed" {

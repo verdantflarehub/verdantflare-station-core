@@ -109,6 +109,17 @@ func (s *AppCenterAdmissionSource) resolve(ctx context.Context, actor identity.I
 		if installed != nil {
 			return zero, ErrAppCenterBinding
 		}
+	} else if command.Action == "upgrade" {
+		if installed == nil || installed.StationID != actor.StationID || installed.OrganizationID != actor.OrganizationID || installed.AppID != command.AppID ||
+			installed.AppVersion == command.AppVersion || installed.State != "installed" {
+			return zero, ErrAppCenterBinding
+		}
+		if s == nil || s.Catalog == nil {
+			return zero, ErrAppCenterUnsupported
+		}
+		if entry, ok := s.Catalog.Entry(command.AppID); !ok || entry.Version != command.AppVersion {
+			return zero, ErrAppCenterBinding
+		}
 	} else if command.Action == "start" || command.Action == "stop" || command.Action == "restart" || command.Action == "delete" {
 		if installed == nil || installed.StationID != actor.StationID || installed.OrganizationID != actor.OrganizationID || installed.AppID != command.AppID ||
 			installed.AppVersion != command.AppVersion || installed.State != "installed" {
@@ -119,12 +130,26 @@ func (s *AppCenterAdmissionSource) resolve(ctx context.Context, actor identity.I
 	}
 	if s != nil && s.Catalog != nil {
 		if helm, ok := s.Catalog.ResolveHelm(ctx, command.AppID, command.AppVersion); ok {
+			installedVer := ""
+			if installed != nil {
+				installedVer = installed.AppVersion
+			}
+			catalogVer := command.AppVersion
+			catalogManifest := helm.ManifestDigest
+			catalogPackage := helm.PackageDigest
+			if entry, ok := s.Catalog.Entry(command.AppID); ok && entry.Version != "" {
+				catalogVer = entry.Version
+				if entry.Helm != nil && entry.Helm.ManifestDigest != "" && entry.Helm.PackageDigest != "" {
+					catalogManifest = entry.Helm.ManifestDigest
+					catalogPackage = entry.Helm.PackageDigest
+				}
+			}
 			policy := AppCenterReleasePolicy{
 				AppID:       command.AppID,
-				AppVersion:  command.AppVersion,
+				AppVersion:  catalogVer,
 				ReleaseKind: "oci-chart",
-				ReleaseRef:  helm.ChartName + "-" + helm.ChartVersion,
-				Actions:     []string{"delete", "install", "restart", "start", "stop"},
+				ReleaseRef:  installedVer,
+				Actions:     []string{"delete", "install", "restart", "start", "stop", "upgrade"},
 			}
 			execution := AppCenterExecution{
 				SchemaVersion:  1,
@@ -139,7 +164,7 @@ func (s *AppCenterAdmissionSource) resolve(ctx context.Context, actor identity.I
 				Policy            AppCenterReleasePolicy
 				Release, Template string
 			}{
-				"studio.appcenter.admission.v1", policy, execution.ReleaseDigest, execution.TemplateDigest})
+				"studio.appcenter.admission.v1", policy, catalogManifest, catalogPackage})
 			return execution, nil
 		}
 	}
@@ -249,7 +274,7 @@ func (s *AppCenterAdmissionSource) Read(ctx context.Context, actor identity.Iden
 			if observation.State != "running" {
 				return zero, ErrAppCenterBinding
 			}
-		case "restart", "delete":
+		case "restart", "delete", "upgrade":
 			if observation.State != "running" && observation.State != "stopped" {
 				return zero, ErrAppCenterBinding
 			}

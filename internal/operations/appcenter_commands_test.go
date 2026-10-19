@@ -35,12 +35,18 @@ func TestAppCenterCommandProtocol(t *testing.T) {
 	if _, err := DecodeAppCenterCommand(strings.NewReader(string(installRaw))); err != nil {
 		t.Fatal("explicit nulls rejected", err)
 	}
+	upgrade := in
+	upgrade.Command.Action = "upgrade"
+	upgradeRaw, _ := json.Marshal(upgrade)
+	if _, err := DecodeAppCenterCommand(strings.NewReader(string(upgradeRaw))); err != nil {
+		t.Fatal("upgrade rejected", err)
+	}
 	for _, bad := range []string{
 		strings.Replace(string(raw), `"schemaVersion":1`, `"schemaVersion":1,"schemaVersion":1`, 1),
 		strings.Replace(string(raw), `"schemaVersion":1`, `"schemaVersion":2`, 1),
 		strings.Replace(string(raw), `"schemaVersion":1,`, ``, 1),
 		strings.Replace(string(raw), `"start"`, `"adopt"`, 1),
-		strings.Replace(string(raw), `"start"`, `"upgrade"`, 1),
+		strings.Replace(string(raw), `"start"`, `"rollback"`, 1),
 		strings.Replace(string(raw), `"installationRevision":3`, `"installationRevision":0`, 1),
 		string(raw) + `{}`,
 		strings.Replace(string(raw), `"command":{`, `"command":{"endpoint":"https://other.invalid",`, 1),

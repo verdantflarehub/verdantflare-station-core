@@ -55,6 +55,9 @@ func (s *AppCenterAdmissionSource) projectCandidate(ctx context.Context, actor i
 		} else if fact.Service.State == "ready" || fact.Service.State == "degraded" || fact.Service.State == "running" || fact.Service.State == "starting" {
 			kinds = []string{"stop", "restart", "delete"}
 		}
+		if len(kinds) > 0 && fact.Catalog != nil && fact.Catalog.Helm != nil && fact.Catalog.Version != "" && fact.Catalog.Version != fact.Installation.AppVersion {
+			kinds = append(kinds, "upgrade")
+		}
 	} else if fact.Origin == "catalog" && fact.Installation == nil && fact.Catalog != nil && fact.Service.State == "absent" {
 		kinds = []string{"install"}
 		version = fact.Catalog.Version
@@ -65,7 +68,11 @@ func (s *AppCenterAdmissionSource) projectCandidate(ctx context.Context, actor i
 	checkCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	for _, kind := range kinds {
-		execution, err := s.resolve(checkCtx, actor, Command{OrganizationID: actor.OrganizationID, StationID: actor.StationID, AppID: fact.AppID, AppVersion: version, Action: kind}, installation)
+		targetVersion := version
+		if kind == "upgrade" && fact.Catalog != nil {
+			targetVersion = fact.Catalog.Version
+		}
+		execution, err := s.resolve(checkCtx, actor, Command{OrganizationID: actor.OrganizationID, StationID: actor.StationID, AppID: fact.AppID, AppVersion: targetVersion, Action: kind}, installation)
 		if err == nil && s.Runtime == nil {
 			err = ErrAppCenterDispatch
 		}
@@ -77,7 +84,7 @@ func (s *AppCenterAdmissionSource) projectCandidate(ctx context.Context, actor i
 			}
 		} else {
 			fact.Lifecycle.PolicyRevision = execution.PolicyRevision
-			if kind == "start" || kind == "stop" || kind == "restart" || kind == "delete" {
+			if kind == "start" || kind == "stop" || kind == "restart" || kind == "delete" || kind == "upgrade" {
 				// Evidence is already scoped by Core. Bind it to the exact local
 				// release without a Runtime call; submission still re-inspects live.
 				templateHash := ""
