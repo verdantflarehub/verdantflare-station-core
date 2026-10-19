@@ -1,6 +1,7 @@
 package operations
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"encoding/json"
@@ -329,16 +330,16 @@ func (s *Service) MigrateNamespace(ctx context.Context, req NamespaceMigrationRe
 						ProfileHash: effectiveHexHash,
 					})
 
-					if hasRuntimeExecutions && (hexHash != "" || w.NewSecretUID != "") {
-						var newHashBytes []byte
+					if hasRuntimeExecutions {
+						var executionHash []byte
 						if hexHash != "" {
-							newHashBytes = hashBytes
+							executionHash = hashBytes
 						}
-						eTag, err := tx.Exec(ctx, `UPDATE station.runtime_instance_executions SET profile_hash = COALESCE($2, profile_hash), state = CASE WHEN $3 <> '' THEN CASE WHEN (state ? 'secret_uid') AND (state #> '{execution,secret_uid}' IS NOT NULL) THEN jsonb_set(jsonb_set(state, '{secret_uid}', to_jsonb($3::text), true), '{execution,secret_uid}', to_jsonb($3::text), true) WHEN state ? 'secret_uid' THEN jsonb_set(state, '{secret_uid}', to_jsonb($3::text), true) WHEN state #> '{execution,secret_uid}' IS NOT NULL THEN jsonb_set(state, '{execution,secret_uid}', to_jsonb($3::text), true) ELSE state END ELSE state END, updated_at = now() WHERE instance_id = $1::uuid`, r.instanceID, newHashBytes, w.NewSecretUID)
+						updated, err := migrateRuntimeExecutions(ctx, tx, r.instanceID, req.SourceNamespace, req.TargetNamespace, executionHash, w.NewSecretUID)
 						if err != nil {
 							return out, err
 						}
-						out.UpdatedRuntimeInstanceExecutions += eTag.RowsAffected()
+						out.UpdatedRuntimeInstanceExecutions += updated
 					}
 				}
 			}
@@ -353,4 +354,116 @@ func (s *Service) MigrateNamespace(ctx context.Context, req NamespaceMigrationRe
 		s.AppStates.ResetAppBindings(req.AppID, req.TargetNamespace)
 	}
 	return out, nil
+}
+
+// migrateRuntimeExecutions rewrites namespace and cluster DNS embedded in
+// execution state without inventing lifecycle transitions or stop evidence.
+func migrateRuntimeExecutions(ctx context.Context, tx pgx.Tx, instanceID, sourceNS, targetNS string, profileHash []byte, secretUID string) (int64, error) {
+	rows, err := tx.Query(ctx, `SELECT operation_id::text, state FROM station.runtime_instance_executions WHERE instance_id=$1::uuid ORDER BY created_at, operation_id FOR UPDATE`, instanceID)
+	if err != nil {
+		return 0, err
+	}
+	type executionRow struct {
+		operationID string
+		state       []byte
+	}
+	var matched []executionRow
+	for rows.Next() {
+		var row executionRow
+		if err = rows.Scan(&row.operationID, &row.state); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		matched = append(matched, row)
+	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return 0, err
+	}
+	rows.Close()
+
+	var updated int64
+	for _, row := range matched {
+		rewritten, changed, err := rewriteExecutionState(row.state, sourceNS, targetNS, secretUID)
+		if err != nil {
+			return 0, err
+		}
+		if changed || len(profileHash) > 0 {
+			tag, err := tx.Exec(ctx, `UPDATE station.runtime_instance_executions SET profile_hash = COALESCE($2, profile_hash), state = $3::jsonb, updated_at = now() WHERE operation_id = $1::uuid`, row.operationID, profileHash, string(rewritten))
+			if err != nil {
+				return 0, err
+			}
+			updated += tag.RowsAffected()
+		}
+	}
+	return updated, nil
+}
+
+func rewriteExecutionState(raw []byte, sourceNS, targetNS, secretUID string) ([]byte, bool, error) {
+	var state map[string]any
+	if len(raw) == 0 {
+		state = map[string]any{}
+	} else if err := decodeMigrationState(raw, &state); err != nil {
+		return nil, false, err
+	}
+	changed := rewriteMigratedValue(state, sourceNS, targetNS, secretUID)
+	if !changed {
+		if len(raw) == 0 {
+			raw = []byte("{}")
+		}
+		return raw, false, nil
+	}
+	out, err := json.Marshal(state)
+	return out, err == nil, err
+}
+
+func rewriteMigratedValue(value any, sourceNS, targetNS, secretUID string) bool {
+	switch node := value.(type) {
+	case map[string]any:
+		changed := false
+		for key, child := range node {
+			if key == "namespace" {
+				if text, ok := child.(string); ok && text == sourceNS && sourceNS != targetNS {
+					node[key] = targetNS
+					changed = true
+					continue
+				}
+			}
+			if key == "secret_uid" && secretUID != "" {
+				if text, ok := child.(string); ok && text != secretUID {
+					node[key] = secretUID
+					changed = true
+					continue
+				}
+			}
+			if text, ok := child.(string); ok && sourceNS != targetNS && strings.Contains(text, "."+sourceNS+".svc.cluster.local") {
+				node[key] = strings.ReplaceAll(text, "."+sourceNS+".svc.cluster.local", "."+targetNS+".svc.cluster.local")
+				changed = true
+				continue
+			}
+			if rewriteMigratedValue(child, sourceNS, targetNS, secretUID) {
+				changed = true
+			}
+		}
+		return changed
+	case []any:
+		changed := false
+		for _, child := range node {
+			if rewriteMigratedValue(child, sourceNS, targetNS, secretUID) {
+				changed = true
+			}
+		}
+		return changed
+	default:
+		return false
+	}
+}
+
+func decodeMigrationState(raw []byte, state *map[string]any) error {
+	if !json.Valid(raw) {
+		return errors.New("invalid execution state JSON")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	return decoder.Decode(state)
 }
