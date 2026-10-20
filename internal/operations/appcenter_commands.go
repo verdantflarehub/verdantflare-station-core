@@ -40,6 +40,7 @@ type AppCenterExecution struct {
 	TemplateDigest string `json:"templateDigest"`
 	PolicyRevision string `json:"policyRevision"`
 	WorkloadUID    string `json:"workloadUID"`
+	marketRelease  bool
 }
 
 // The platform-owned reader resolves the exact version and action, checks live

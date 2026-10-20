@@ -156,6 +156,7 @@ func (s *AppCenterAdmissionSource) resolve(ctx context.Context, actor identity.I
 				Action:         command.Action,
 				ReleaseDigest:  helm.ManifestDigest,
 				TemplateDigest: helm.PackageDigest,
+				marketRelease:  true,
 			}
 			execution.PolicyRevision = appcenter.Digest(struct {
 				Protocol          string
@@ -218,6 +219,18 @@ func (s *AppCenterAdmissionSource) Read(ctx context.Context, actor identity.Iden
 	execution, err := s.resolve(ctx, actor, command, installed)
 	if err != nil {
 		return zero, err
+	}
+	if (command.Action == "install" || command.Action == "upgrade") && execution.marketRelease {
+		if s.Catalog == nil {
+			return zero, appcenter.ErrUnavailable
+		}
+		allowed, grantErr := s.Catalog.CheckInstallGrant(ctx, command.AppID, command.AppVersion, actor.OrganizationID)
+		if grantErr != nil {
+			return zero, appcenter.ErrUnavailable
+		}
+		if !allowed {
+			return zero, identity.Denied
+		}
 	}
 	installationID := ""
 	if installed != nil {

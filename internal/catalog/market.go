@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -102,10 +103,10 @@ func LoadMarket(ctx context.Context, cfg MarketConfig, reader Reader) (*Service,
 		disc = d
 	}
 	svc := &Service{
-		reader:        reader,
-		discoverer:    disc,
-		marketCfg:     &cfg,
-		versionCache:  map[string]marketAppVersion{},
+		reader:       reader,
+		discoverer:   disc,
+		marketCfg:    &cfg,
+		versionCache: map[string]marketAppVersion{},
 	}
 
 	if err := svc.RefreshMarket(ctx); err != nil {
@@ -303,6 +304,45 @@ func (s *Service) RefreshMarket(ctx context.Context) error {
 	return nil
 }
 
+// CheckInstallGrant always reads Control at command admission time. Catalog
+// visibility and previously cached version data never imply installation rights.
+func (s *Service) CheckInstallGrant(ctx context.Context, appID, version, stationOrganizationID string) (bool, error) {
+	if s == nil || s.marketCfg == nil || s.marketCfg.Token == "" || appID == "" || version == "" || stationOrganizationID == "" {
+		return false, errors.New("market entitlement configuration unavailable")
+	}
+	cfg := s.marketCfg
+	address := fmt.Sprintf("%s/api/control/station/v2/apps/%s/versions/%s/install-grant/%s", cfg.BaseURL, url.PathEscape(appID), url.PathEscape(version), url.PathEscape(stationOrganizationID))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("Authorization", "Bearer "+cfg.Token)
+	req.Header.Set("Accept", "application/json")
+	resp, err := cfg.HTTPClient.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusForbidden {
+		return false, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return false, fmt.Errorf("install grant endpoint returned %d", resp.StatusCode)
+	}
+	var grant struct {
+		AppID   string `json:"appId"`
+		Version string `json:"version"`
+		Allowed bool   `json:"allowed"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&grant); err != nil {
+		return false, err
+	}
+	if grant.AppID != appID || grant.Version != version {
+		return false, errors.New("install grant identity mismatch")
+	}
+	return grant.Allowed, nil
+}
+
 func (s *Service) fetchMarketVersion(ctx context.Context, appID, ver string) (marketAppVersion, error) {
 	key := appID + "@" + ver
 	s.mu.RLock()
@@ -409,4 +449,3 @@ func saveEntriesFile(path string, entries []Entry) error {
 	}
 	return os.Rename(tmp, path)
 }
-
