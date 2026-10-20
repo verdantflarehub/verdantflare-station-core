@@ -2,6 +2,7 @@ package operations
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -18,6 +19,10 @@ import (
 )
 
 func transitionDatabase(t *testing.T) (*Service, identity.IdentityContext, TransitionCommand, TransitionReader) {
+	return transitionDatabaseApp(t, "test-app", "1.9.0")
+}
+
+func transitionDatabaseApp(t *testing.T, app, version string) (*Service, identity.IdentityContext, TransitionCommand, TransitionReader) {
 	t.Helper()
 	ctx := context.Background()
 	pool := testdb.New(t)
@@ -34,7 +39,8 @@ func transitionDatabase(t *testing.T) (*Service, identity.IdentityContext, Trans
 		t.Fatal(err)
 	}
 	path := filepath.Join(t.TempDir(), "catalog.json")
-	if err = os.WriteFile(path, []byte(`[{"app_id":"test-app","display_name":"Test","group_id":"video","brand":"vf","models":[],"source":"deploys/test.yaml","namespace":"test","workload_name":"test-app","version":"1.9.0","images":[{"component":"server","image":"example.invalid/test:1.9.0"}]}]`), 0600); err != nil {
+	catalogJSON, _ := json.Marshal([]any{map[string]any{"app_id": app, "display_name": "Test", "group_id": "video", "brand": "vf", "models": []string{}, "source": "deploys/test.yaml", "namespace": "test", "workload_name": app, "version": version, "images": []any{map[string]string{"component": "server", "image": "example.invalid/test:" + version}}}})
+	if err = os.WriteFile(path, catalogJSON, 0600); err != nil {
 		t.Fatal(err)
 	}
 	apps, err := catalog.Load(path, nil)
@@ -42,7 +48,7 @@ func transitionDatabase(t *testing.T) (*Service, identity.IdentityContext, Trans
 		t.Fatal(err)
 	}
 	svc := &Service{Pool: pool, Catalog: apps, StationID: station}
-	_, err = svc.Submit(ctx, user.IdentityContext, Command{RequestID: "initial-install", IdempotencyKey: "initial-install-key", OrganizationID: user.OrganizationID, StationID: station, AppID: "test-app", AppVersion: "1.9.0", Action: "install"})
+	_, err = svc.Submit(ctx, user.IdentityContext, Command{RequestID: "initial-install", IdempotencyKey: "initial-install-key", OrganizationID: user.OrganizationID, StationID: station, AppID: app, AppVersion: version, Action: "install"})
 	if err != nil {
 		t.Fatal(err)
 	}

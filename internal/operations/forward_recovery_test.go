@@ -60,11 +60,8 @@ func TestForwardCommandAndExactScope(t *testing.T) {
 func TestForwardDatabaseRetryProofCASAndIsolation(t *testing.T) {
 	for _, scenario := range []string{"success", "missing proof", "revision changed", "rejected"} {
 		t.Run(scenario, func(t *testing.T) {
-			svc, user, cmd, _ := transitionDatabase(t)
+			svc, user, cmd, _ := transitionDatabaseApp(t, "world", "0.1.4")
 			ctx := context.Background()
-			if _, err := svc.Pool.Exec(ctx, `UPDATE station.app_installations SET app_id='world',app_version='0.1.4' WHERE installation_id=$1`, cmd.InstallationID); err != nil {
-				t.Fatal(err)
-			}
 			cmd.SourceVersion = "0.1.4"
 			cmd.TargetReleaseRef = "world-v0.1.5"
 			old, err := svc.SubmitTransition(ctx, user, cmd, func(context.Context, identity.IdentityContext, Installation, string) (TransitionSnapshot, TransitionSnapshot, error) {
