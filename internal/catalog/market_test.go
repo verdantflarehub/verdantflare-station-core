@@ -129,18 +129,16 @@ items:
 		t.Fatalf("LoadMarket failed: %v", err)
 	}
 	entries := svc.Entries()
-	if len(entries) != 3 {
-		t.Fatalf("expected 3 entries, got %d", len(entries))
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 verified entries, got %d", len(entries))
+	}
+	if _, ok := svc.Entry("image-face-fusion-api"); ok {
+		t.Fatal("unverified release was ingested into the Station catalog")
 	}
 	blender, ok := svc.Entry("blender")
 	if !ok || blender.WorkloadName != "blender-manager" || blender.Namespace != "verdantflare-app" || blender.Helm == nil || blender.Helm.ManifestDigest != manifestDigest || blender.Helm.ValuesSource != "deploys/k8s.dev.verdantflarehub.com/verdantflare-app/blender.yaml" {
 		t.Fatalf("unexpected blender entry: %+v", blender)
 	}
-	disabled, ok := svc.Entry("image-face-fusion-api")
-	if !ok || disabled.Version != "0.1.2" || disabled.DisabledReason == "" || disabled.Helm != nil {
-		t.Fatalf("unexpected disabled entry: %+v", disabled)
-	}
-
 	// Second refresh should hit 304 Not Modified and not re-fetch versions.
 	if err := svc.RefreshMarket(context.Background()); err != nil {
 		t.Fatalf("RefreshMarket 304 failed: %v", err)
@@ -157,8 +155,11 @@ items:
 		CacheFile:  cacheFile,
 		HTTPClient: server.Client(),
 	}, nil)
-	if err != nil || len(cachedSvc.Entries()) != 3 {
-		t.Fatalf("expected LKG cache fallback to succeed, err=%v", err)
+	if err != nil || len(cachedSvc.Entries()) != 2 {
+		t.Fatalf("expected LKG cache fallback to succeed with verified entries, err=%v", err)
+	}
+	if _, ok := cachedSvc.Entry("image-face-fusion-api"); ok {
+		t.Fatal("cached unverified release was restored into the Station catalog")
 	}
 }
 
