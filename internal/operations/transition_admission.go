@@ -13,6 +13,7 @@ var ErrTransitionAdmissionDisabled = errors.New("TRANSITION_ADMISSION_DISABLED")
 // and remains enabled when new acceptance is disabled.
 func (s *Service) ConfigureTransitionAdmission(value string, runtime *HTTPTransitionRuntime) error {
 	s.transitionAdmissionEnabled = false
+	s.ForwardRecoveryRuntime = runtime
 	if value == "" || value == "false" {
 		return nil
 	}

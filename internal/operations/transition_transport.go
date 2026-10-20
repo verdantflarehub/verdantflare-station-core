@@ -44,7 +44,7 @@ func NewHTTPTransitionRuntime(origin, token string) (*HTTPTransitionRuntime, err
 func validTransitionStep(step TransitionStep) bool {
 	id, err := uuid.Parse(step.RequestID)
 	return canonicalInstallation(step.OperationID) && err == nil && id.Version() == 4 && id.Variant() == uuid.RFC4122 && id.String() == step.RequestID && transitionDigest.MatchString(step.InputDigest) &&
-		slices.Contains([]string{"prepare", "restore", "release_source", "release_target"}, step.Mode)
+		slices.Contains([]string{"prepare", "restore", "release_source", "release_target", "verify_forward"}, step.Mode)
 }
 
 func (c *HTTPTransitionRuntime) ReconcileTransition(ctx context.Context, step TransitionStep) (TransitionProgress, error) {
@@ -82,7 +82,9 @@ func (c *HTTPTransitionRuntime) ReconcileTransition(ctx context.Context, step Tr
 		return empty, ErrTransitionProgress
 	}
 	allowed := []string{"checking", "sealing", "applying", "verifying", "prepared", "recovery_required", "rejected"}
-	if step.Mode == "restore" {
+	if step.Mode == "verify_forward" {
+		allowed = []string{"verified", "rejected"}
+	} else if step.Mode == "restore" {
 		allowed = []string{"restoring", "restored", "recovery_required"}
 	} else if strings.HasPrefix(step.Mode, "release_") {
 		allowed = []string{"releasing", "released"}

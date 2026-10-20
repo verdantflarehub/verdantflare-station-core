@@ -235,6 +235,7 @@ func (s *Server) ServeHTTP(original http.ResponseWriter, r *http.Request) {
 	}
 	routes := map[string]string{
 		transitionPath:                                    "POST",
+		forwardRecoveryPath:                               "POST",
 		"/internal/app-states/v1/stream":                  "POST",
 		"/app-states/v1":                                  "GET",
 		"/appcenter/v1/facts":                             "GET",
@@ -266,6 +267,9 @@ func (s *Server) ServeHTTP(original http.ResponseWriter, r *http.Request) {
 		routes[r.URL.Path] = "GET"
 	}
 	if strings.HasPrefix(r.URL.Path, "/preinstalled/apps/") || strings.HasPrefix(r.URL.Path, "/preinstalled/releases/") {
+		routes[r.URL.Path] = "GET"
+	}
+	if strings.HasPrefix(r.URL.Path, forwardRecoveryPath+"/") {
 		routes[r.URL.Path] = "GET"
 	}
 	if strings.HasPrefix(r.URL.Path, transitionPath+"/") {
@@ -442,6 +446,10 @@ func (s *Server) ServeHTTP(original http.ResponseWriter, r *http.Request) {
 	}
 	if route == "/app-states/v1" || strings.HasPrefix(route, "/app-states/v1/installations/") {
 		s.serveAppStates(w, r, ctx, requestID, user)
+		return
+	}
+	if route == forwardRecoveryPath || strings.HasPrefix(route, forwardRecoveryPath+"/") {
+		s.serveForwardRecovery(w, r, ctx, requestID, user)
 		return
 	}
 	if route == transitionPath || strings.HasPrefix(route, transitionPath+"/") {

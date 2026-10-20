@@ -46,6 +46,7 @@ type Operation struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 type Service struct {
+	ForwardRecoveryRuntime     TransitionRuntime
 	transitionAdmissionEnabled bool
 	Pool                       *pgxpool.Pool
 	Catalog                    *catalog.Service

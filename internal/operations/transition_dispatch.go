@@ -141,6 +141,13 @@ func (s *Service) DispatchTransition(ctx context.Context, operation string, runt
 	if slices.Contains([]string{"succeeded", "failed"}, r.Status) {
 		return r.Transition, nil
 	}
+	var forwardPending bool
+	if err := conn.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM station.app_installation_forward_recoveries WHERE operation_id=$1 AND state='pending')`, operation).Scan(&forwardPending); err != nil {
+		return r.Transition, err
+	}
+	if forwardPending {
+		return r.Transition, ErrTransitionBusy
+	}
 	installed := r.installationState()
 	if installed == "" || (slices.Contains([]string{"accepted", "checking", "sealing", "applying", "verifying", "publishing"}, r.Phase) && installed != "original") {
 		return r.Transition, ErrTransitionProgress
