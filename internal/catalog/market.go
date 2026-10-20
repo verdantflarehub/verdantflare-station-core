@@ -112,13 +112,13 @@ func LoadMarket(ctx context.Context, cfg MarketConfig, reader Reader) (*Service,
 	if err := svc.RefreshMarket(ctx); err != nil {
 		if cfg.CacheFile != "" {
 			if cached, cacheErr := loadEntriesFile(cfg.CacheFile); cacheErr == nil {
-				svc.setEntries(cached)
+				svc.setEntries(verifiedCatalogEntries(cached))
 				return svc, nil
 			}
 		}
 		if cfg.FallbackFile != "" {
 			if fallback, fbErr := Load(cfg.FallbackFile, reader); fbErr == nil {
-				svc.setEntries(fallback.Entries())
+				svc.setEntries(verifiedCatalogEntries(fallback.Entries()))
 				return svc, nil
 			}
 		}
@@ -281,6 +281,10 @@ func (s *Service) RefreshMarket(ctx context.Context) error {
 		}
 		ids[appID] = true
 		targets[target] = true
+		// A release that has not passed verification is not a Station catalog entry.
+		if helmMeta == nil || disabledReason != "" {
+			continue
+		}
 		entries = append(entries, entry)
 	}
 
@@ -421,6 +425,16 @@ func (s *Service) ResolveHelm(ctx context.Context, appID, appVersion string) (*H
 		ReleaseName:      appID,
 		ValuesSource:     defaultValuesSource(appID),
 	}, true
+}
+
+func verifiedCatalogEntries(entries []Entry) []Entry {
+	verified := make([]Entry, 0, len(entries))
+	for _, entry := range entries {
+		if entry.Helm != nil && strings.TrimSpace(entry.DisabledReason) == "" {
+			verified = append(verified, entry)
+		}
+	}
+	return verified
 }
 
 func loadEntriesFile(path string) ([]Entry, error) {
