@@ -55,7 +55,7 @@ func (s *AppCenterAdmissionSource) projectCandidate(ctx context.Context, actor i
 		} else if fact.Service.State == "ready" || fact.Service.State == "degraded" || fact.Service.State == "running" || fact.Service.State == "starting" {
 			kinds = []string{"stop", "restart", "delete"}
 		}
-		if len(kinds) > 0 && fact.Catalog != nil && fact.Catalog.Helm != nil && fact.Catalog.Version != "" && fact.Catalog.Version != fact.Installation.AppVersion {
+		if len(kinds) > 0 && fact.Catalog != nil && fact.Catalog.Helm != nil && appcenter.VersionNewer(fact.Catalog.Version, fact.Installation.AppVersion) {
 			kinds = append(kinds, "upgrade")
 		}
 	} else if fact.Origin == "catalog" && fact.Installation == nil && fact.Catalog != nil && fact.Service.State == "absent" {

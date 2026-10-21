@@ -109,7 +109,7 @@ func (s *AppCenterAdmissionSource) resolve(ctx context.Context, actor identity.I
 		}
 	} else if command.Action == "upgrade" {
 		if installed == nil || installed.StationID != actor.StationID || installed.OrganizationID != actor.OrganizationID || installed.AppID != command.AppID ||
-			installed.AppVersion == command.AppVersion || installed.State != "installed" {
+			!appcenter.VersionNewer(command.AppVersion, installed.AppVersion) || installed.State != "installed" {
 			return zero, ErrAppCenterBinding
 		}
 		if s == nil || s.Catalog == nil {

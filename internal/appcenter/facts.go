@@ -365,7 +365,7 @@ func buildFacts(user identity.IdentityContext, request string, now time.Time, ca
 		for _, kind := range []string{"install", "start", "stop", "restart", "delete"} {
 			item.Lifecycle.Candidates = append(item.Lifecycle.Candidates, Candidate{Kind: kind, ReasonCode: Text(reason), AppVersion: version})
 		}
-		if item.Installation != nil && item.Installation.State == "installed" && item.Catalog != nil && item.Catalog.Helm != nil && item.Catalog.Version != "" && item.Catalog.Version != item.Installation.AppVersion {
+		if item.Installation != nil && item.Installation.State == "installed" && item.Catalog != nil && item.Catalog.Helm != nil && VersionNewer(item.Catalog.Version, item.Installation.AppVersion) {
 			item.Lifecycle.Candidates = append(item.Lifecycle.Candidates, Candidate{Kind: "upgrade", ReasonCode: Text(reason), AppVersion: item.Catalog.Version})
 		}
 	}
