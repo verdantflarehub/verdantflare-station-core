@@ -84,6 +84,7 @@ func (s *Service) DispatchOne(ctx context.Context, client pb.AppRuntimeClient) (
 			return postponeDispatch(ctx, tx, in.OperationId, callErr)
 		}
 	}
+	progress = normalizeRuntimeProgress(progress)
 	if progress == nil || progress.OperationId != in.OperationId || !validProgress(progress) {
 		return true, errors.New("invalid runtime progress")
 	}
@@ -105,6 +106,15 @@ func postponeDispatch(ctx context.Context, tx pgx.Tx, id string, pending error) 
 		return true, err
 	}
 	return true, pending
+}
+
+// Older Runtime releases durably recorded this Helm-specific code. Preserve
+// terminal replay and its diagnostic while translating to the lifecycle contract.
+func normalizeRuntimeProgress(p *pb.AppProgress) *pb.AppProgress {
+	if p != nil && p.Status == "failed" && p.ErrorCode == "CHART_EXECUTION_FAILED" {
+		p.ErrorCode = "SERVICE_UNAVAILABLE"
+	}
+	return p
 }
 
 func validProgress(p *pb.AppProgress) bool {

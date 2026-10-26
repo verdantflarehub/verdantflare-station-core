@@ -126,3 +126,23 @@ func TestRejectMalformedRuntimeProgress(t *testing.T) {
 		t.Fatal(errors.New("unknown total rejected"))
 	}
 }
+
+func TestLegacyHelmFailureTerminalReplay(t *testing.T) {
+	p := &pb.AppProgress{OperationId: "saved-operation", Status: "failed", Phase: "checking", ErrorCode: "CHART_EXECUTION_FAILED", ErrorMessage: "Helm execution failed: Chart PVC has no Helm keep policy"}
+	if validProgress(p) {
+		t.Fatal("legacy code unexpectedly belongs to current contract")
+	}
+	got := normalizeRuntimeProgress(p)
+	if !validProgress(got) || got.Status != "failed" || got.ErrorCode != "SERVICE_UNAVAILABLE" || got.OperationId != "saved-operation" || got.ErrorMessage != "Helm execution failed: Chart PVC has no Helm keep policy" {
+		t.Fatalf("terminal failure was not preserved: %+v", got)
+	}
+	if normalizeRuntimeProgress(nil) != nil {
+		t.Fatal("nil progress changed")
+	}
+	if validProgress(normalizeRuntimeProgress(&pb.AppProgress{Status: "failed", Phase: "checking", ErrorCode: "UNKNOWN_FUTURE", ErrorMessage: "failure"})) {
+		t.Fatal("unknown codes must still be rejected")
+	}
+	if validProgress(normalizeRuntimeProgress(&pb.AppProgress{Status: "running", Phase: "checking", ErrorCode: "CHART_EXECUTION_FAILED", ErrorMessage: "failure"})) {
+		t.Fatal("malformed running progress accepted")
+	}
+}
