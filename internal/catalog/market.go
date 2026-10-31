@@ -354,7 +354,52 @@ func (s *Service) fetchMarketVersion(ctx context.Context, appID, ver string) (ma
 		s.mu.RUnlock()
 		return cached, nil
 	}
+	if until, missed := s.versionMiss[key]; missed && time.Now().Before(until) {
+		s.mu.RUnlock()
+		return marketAppVersion{}, errMarketVersionMissCached
+	}
 	s.mu.RUnlock()
+	out, err := s.requestMarketVersion(ctx, appID, ver)
+	if err != nil {
+		// Absent versions are stable for minutes; transport failures retry sooner.
+		ttl := marketVersionErrorTTL
+		if errors.Is(err, errMarketVersionNotFound) {
+			ttl = marketVersionMissTTL
+		}
+		if ctx.Err() == nil {
+			s.mu.Lock()
+			if s.versionMiss == nil {
+				s.versionMiss = map[string]time.Time{}
+			}
+			if len(s.versionMiss) >= 4096 {
+				s.versionMiss = map[string]time.Time{}
+			}
+			s.versionMiss[key] = time.Now().Add(ttl)
+			s.mu.Unlock()
+		}
+		return marketAppVersion{}, err
+	}
+	s.mu.Lock()
+	if s.versionCache == nil {
+		s.versionCache = map[string]marketAppVersion{}
+	}
+	s.versionCache[key] = out
+	delete(s.versionMiss, key)
+	s.mu.Unlock()
+	return out, nil
+}
+
+const (
+	marketVersionMissTTL  = 10 * time.Minute
+	marketVersionErrorTTL = 30 * time.Second
+)
+
+var (
+	errMarketVersionNotFound   = errors.New("market version not found")
+	errMarketVersionMissCached = errors.New("market version lookup recently failed")
+)
+
+func (s *Service) requestMarketVersion(ctx context.Context, appID, ver string) (marketAppVersion, error) {
 
 	cfg := s.marketCfg
 	url := fmt.Sprintf("%s/api/control/station/v2/apps/%s/versions/%s", cfg.BaseURL, appID, ver)
@@ -371,6 +416,9 @@ func (s *Service) fetchMarketVersion(ctx context.Context, appID, ver string) (ma
 		return marketAppVersion{}, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return marketAppVersion{}, errMarketVersionNotFound
+	}
 	if resp.StatusCode != http.StatusOK {
 		return marketAppVersion{}, fmt.Errorf("version endpoint returned %d", resp.StatusCode)
 	}
@@ -378,12 +426,6 @@ func (s *Service) fetchMarketVersion(ctx context.Context, appID, ver string) (ma
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out); err != nil {
 		return marketAppVersion{}, err
 	}
-	s.mu.Lock()
-	if s.versionCache == nil {
-		s.versionCache = map[string]marketAppVersion{}
-	}
-	s.versionCache[key] = out
-	s.mu.Unlock()
 	return out, nil
 }
 

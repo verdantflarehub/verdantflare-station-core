@@ -163,3 +163,49 @@ items:
 	}
 }
 
+func TestMarketVersionLookupFailuresAreCached(t *testing.T) {
+	var hits atomic.Int32
+	digest := "sha256:" + strings.Repeat("d", 64)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		switch r.URL.Path {
+		case "/api/control/station/v2/apps/known/versions/1.0.0":
+			_ = json.NewEncoder(w).Encode(map[string]any{"chart": map[string]any{"name": "known", "ociRef": "oci://registry.invalid/charts/known", "version": "1.0.0", "manifestDigest": digest, "packageDigest": digest}})
+		case "/api/control/station/v2/apps/broken/versions/1.0.0":
+			w.WriteHeader(http.StatusBadGateway)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	s := &Service{marketCfg: &MarketConfig{BaseURL: server.URL, HTTPClient: server.Client()}}
+	for range 3 {
+		if _, ok := s.ResolveHelm(context.Background(), "absent", "1.0.0"); ok {
+			t.Fatal("absent version resolved")
+		}
+	}
+	if hits.Load() != 1 {
+		t.Fatalf("absent version requested %d times", hits.Load())
+	}
+	for range 3 {
+		s.ResolveHelm(context.Background(), "broken", "1.0.0")
+	}
+	if hits.Load() != 2 {
+		t.Fatalf("failing version requested %d times", hits.Load())
+	}
+	for range 3 {
+		if _, ok := s.ResolveHelm(context.Background(), "known", "1.0.0"); !ok {
+			t.Fatal("known version not resolved")
+		}
+	}
+	if hits.Load() != 3 {
+		t.Fatalf("known version requested %d times", hits.Load()-2)
+	}
+	s.mu.Lock()
+	s.versionMiss["absent@1.0.0"] = s.versionMiss["absent@1.0.0"].Add(-marketVersionMissTTL)
+	s.mu.Unlock()
+	s.ResolveHelm(context.Background(), "absent", "1.0.0")
+	if hits.Load() != 4 {
+		t.Fatal("expired miss not retried")
+	}
+}

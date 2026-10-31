@@ -84,6 +84,9 @@ type Service struct {
 	marketCfg    *MarketConfig
 	marketETag   string
 	versionCache map[string]marketAppVersion
+	// versionMiss remembers failed market lookups until the stored time so
+	// AppCenter facts do not repeat cross-region requests on every read.
+	versionMiss map[string]time.Time
 }
 
 func (s *Service) setEntries(entries []Entry) {
