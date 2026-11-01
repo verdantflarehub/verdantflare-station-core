@@ -69,6 +69,8 @@ type marketAppVersion struct {
 
 func defaultWorkloadName(appID string) string {
 	switch appID {
+	case "tryon":
+		return "tryon-mcp-server"
 	case "image-mcp", "video-mcp", "music-mcp", "speech-mcp":
 		return appID + "-server"
 	case "blender", "comfyui":

@@ -209,3 +209,10 @@ func TestMarketVersionLookupFailuresAreCached(t *testing.T) {
 		t.Fatal("expired miss not retried")
 	}
 }
+
+func TestTryonCatalogPositionMatchesManagedInstallation(t *testing.T) {
+	entry := Entry{AppID: "tryon", Namespace: "verdantflare-app", WorkloadName: defaultWorkloadName("tryon")}
+	if entry.Namespace+"/"+entry.WorkloadName != "verdantflare-app/tryon-mcp-server" {
+		t.Fatal("catalog position must match the Tryon Chart and Runtime installation binding")
+	}
+}
