@@ -68,7 +68,7 @@ items:
         image: registry.cn-qingdao.aliyuncs.com/wod/verdantflare-app:google-channel-v0.1.11
     chart: oci://registry.verdantflare.ai/charts/google
     chartVersion: 0.1.0
-  - appId: image-face-fusion-api
+  - appId: image-face-fusion
     displayName: Face Fusion
     sortOrder: 50
     groupId: image
@@ -81,7 +81,7 @@ items:
       - image.faceswap
     images:
       - component: api
-        image: registry.cn-qingdao.aliyuncs.com/wod/verdantflare-app:image-face-fusion-api-v0.1.2
+        image: registry.cn-qingdao.aliyuncs.com/wod/verdantflare-app:image-face-fusion-v0.2.3
     disabledReason: 当前人脸融合模型服务按需调度于 GPU 节点，未在 5090 dev 常驻。
 `))
 		case "/api/control/station/v2/apps/blender/versions/0.1.12":
@@ -132,7 +132,7 @@ items:
 	if len(entries) != 2 {
 		t.Fatalf("expected 2 verified entries, got %d", len(entries))
 	}
-	if _, ok := svc.Entry("image-face-fusion-api"); ok {
+	if _, ok := svc.Entry("image-face-fusion"); ok {
 		t.Fatal("unverified release was ingested into the Station catalog")
 	}
 	blender, ok := svc.Entry("blender")
@@ -158,7 +158,7 @@ items:
 	if err != nil || len(cachedSvc.Entries()) != 2 {
 		t.Fatalf("expected LKG cache fallback to succeed with verified entries, err=%v", err)
 	}
-	if _, ok := cachedSvc.Entry("image-face-fusion-api"); ok {
+	if _, ok := cachedSvc.Entry("image-face-fusion"); ok {
 		t.Fatal("cached unverified release was restored into the Station catalog")
 	}
 }
