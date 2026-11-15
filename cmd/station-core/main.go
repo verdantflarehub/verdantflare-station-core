@@ -28,6 +28,7 @@ import (
 	"github.com/verdantflarehub/verdantflare-station-core/internal/identity"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/operations"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/releasebinding"
+	"github.com/verdantflarehub/verdantflare-station-core/internal/resources"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/telemetry"
 	"github.com/verdantflarehub/verdantflare-station-core/migrations"
 )
@@ -160,7 +161,7 @@ func run() int {
 	appStates := &appstate.Service{Pool: pool, StationID: c.StationID, Catalog: appCatalog}
 	ops.AppStates = appStates
 	appStateCollector, err := appstate.LoadCollectors(os.Getenv("STATION_APP_STATE_COLLECTOR_REGISTRY"), os.Getenv, appStates, []string{
-		c.BootstrapToken, os.Getenv("STATION_APP_TRANSITION_CONTROL_TOKEN"), os.Getenv("STATION_INSTANCE_CONTROL_TOKEN"), os.Getenv("STATION_BLENDER_CONTROL_TOKEN"), os.Getenv("STATION_APP_INSTALLATION_COMFYUI_TOKEN"), os.Getenv("STATION_NETWORK_TOKEN"), os.Getenv("STATION_RESOURCES_TOKEN"), os.Getenv("STATION_MARKET_CATALOG_TOKEN"),
+		c.BootstrapToken, os.Getenv("STATION_APP_TRANSITION_CONTROL_TOKEN"), os.Getenv("STATION_INSTANCE_CONTROL_TOKEN"), os.Getenv("STATION_BLENDER_CONTROL_TOKEN"), os.Getenv("STATION_APP_INSTALLATION_COMFYUI_TOKEN"), os.Getenv("STATION_NETWORK_TOKEN"), os.Getenv("STATION_RESOURCES_TOKEN"), os.Getenv("STATION_MARKET_CATALOG_TOKEN"), os.Getenv("STATION_GPU_SCHEDULER_TOKEN"),
 	})
 	if err != nil {
 		logger.Error("app_state_collector_configuration_invalid")
@@ -267,6 +268,23 @@ func run() int {
 		logger.Error("invalid_blender_control_configuration")
 		return 1
 	}
+	gpuSchedulerControl, err := gateway.NewRuntimeControl(os.Getenv("STATION_GPU_SCHEDULER_URL"), os.Getenv("STATION_GPU_SCHEDULER_TOKEN"))
+	if err != nil {
+		logger.Error("invalid_gpu_scheduler_control_configuration")
+		return 1
+	}
+	modelControlURL := os.Getenv("STATION_MODEL_CACHE_RUNTIME_URL")
+	modelControlToken := os.Getenv("STATION_MODEL_CACHE_CONTROL_TOKEN")
+	if modelControlURL == "" && modelControlToken == "" && blenderControl == nil {
+		modelControlURL = os.Getenv("STATION_INSTANCE_RUNTIME_URL")
+		modelControlToken = os.Getenv("STATION_INSTANCE_CONTROL_TOKEN")
+	}
+	modelCacheControl, err := gateway.NewRuntimeControl(modelControlURL, modelControlToken)
+	if err != nil {
+		logger.Error("invalid_model_cache_control_configuration")
+		return 1
+	}
+	modelStore := &resources.PGModelStore{Pool: pool, StationID: c.StationID}
 	var egressService *egress.Service
 	if encoded := os.Getenv("STATION_EGRESS_ENCRYPTION_KEY"); encoded != "" {
 		key, decodeErr := base64.StdEncoding.DecodeString(encoded)
@@ -291,7 +309,7 @@ func run() int {
 		logger.Error("invalid_installation_access_configuration")
 		return 1
 	}
-	server := &http.Server{Addr: c.Listen, Handler: &gateway.Server{AppStates: appStates, AppStateCollector: appStateCollector, Identity: service, BootstrapToken: c.BootstrapToken, Logger: logger, Catalog: appCatalog, Operations: ops, Telemetry: telemetryService, BlenderControl: blenderControl, Egress: egressService, AppAccess: appAccess, InstallationAccess: installationAccess}, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 65 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
+	server := &http.Server{Addr: c.Listen, Handler: &gateway.Server{AppStates: appStates, AppStateCollector: appStateCollector, Identity: service, BootstrapToken: c.BootstrapToken, Logger: logger, Catalog: appCatalog, Operations: ops, Telemetry: telemetryService, BlenderControl: blenderControl, GPUSchedulerControl: gpuSchedulerControl, ModelCacheControl: modelCacheControl, ModelStore: modelStore, Egress: egressService, AppAccess: appAccess, InstallationAccess: installationAccess}, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 65 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	server.BaseContext = func(net.Listener) context.Context { return ctx }
 	done := make(chan error, 1)
 	go func() { done <- server.ListenAndServe() }()

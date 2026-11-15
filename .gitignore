@@ -33,6 +33,7 @@ go.work.sum
 
 # Local build and credentials
 /bin/
+/station-core
 .env.*
 
 # Python release guard test cache

@@ -17,6 +17,7 @@ import (
 type AppAccess struct {
 	networkToken, resourcesToken string
 	manager                      func(context.Context, string, string, func(context.Context) error) error
+	member                       func(context.Context, string, string, func(context.Context) error) error
 }
 
 func NewAppAccess(networkToken, resourcesToken string, service *identity.Service) (*AppAccess, error) {
@@ -31,7 +32,14 @@ func NewAppAccess(networkToken, resourcesToken string, service *identity.Service
 	if service == nil || (networkToken != "" && networkToken == resourcesToken) {
 		return nil, errors.New("invalid application delegation configuration")
 	}
-	return &AppAccess{networkToken: networkToken, resourcesToken: resourcesToken, manager: service.WithManager}, nil
+	return &AppAccess{networkToken: networkToken, resourcesToken: resourcesToken, manager: service.WithManager, member: service.WithMember}, nil
+}
+
+func (a *AppAccess) withMember(ctx context.Context, userID, orgID string, fn func(context.Context) error) error {
+	if a.member != nil {
+		return a.member(ctx, userID, orgID, fn)
+	}
+	return a.manager(ctx, userID, orgID, fn)
 }
 
 func canonicalSubject(value string) bool {
@@ -40,6 +48,10 @@ func canonicalSubject(value string) bool {
 }
 
 func (s *Server) delegatedApp(w http.ResponseWriter, r *http.Request, requestID, app string) (string, string, bool) {
+	return s.delegatedAppQuery(w, r, requestID, app, false)
+}
+
+func (s *Server) delegatedAppQuery(w http.ResponseWriter, r *http.Request, requestID, app string, allowQuery bool) (string, string, bool) {
 	if s.AppAccess == nil || s.Identity == nil || s.AppAccess.manager == nil {
 		reply(w, 503, ErrorResponse{"SERVICE_UNAVAILABLE", "Application delegation is not configured", requestID})
 		return "", "", false
@@ -60,7 +72,11 @@ func (s *Server) delegatedApp(w http.ResponseWriter, r *http.Request, requestID,
 			return "", "", false
 		}
 	}
-	if r.URL.RawQuery != "" || r.URL.ForceQuery || r.URL.RawPath != "" || r.Header.Get("Content-Encoding") != "" {
+	queryInvalid := r.URL.RawQuery != "" || r.URL.ForceQuery
+	if allowQuery {
+		queryInvalid = r.URL.ForceQuery && r.URL.RawQuery == ""
+	}
+	if queryInvalid || r.URL.RawPath != "" || r.Header.Get("Content-Encoding") != "" {
 		failure(w, requestID, identity.Invalid)
 		return "", "", false
 	}

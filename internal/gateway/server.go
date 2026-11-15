@@ -26,6 +26,7 @@ import (
 	"github.com/verdantflarehub/verdantflare-station-core/internal/egress"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/identity"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/operations"
+	"github.com/verdantflarehub/verdantflare-station-core/internal/resources"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/telemetry"
 	"github.com/verdantflarehub/verdantflare-station-core/migrations"
 )
@@ -62,7 +63,10 @@ type Server struct {
 	Catalog            *catalog.Service
 	Operations         *operations.Service
 	Telemetry          *telemetry.Service
-	BlenderControl     *BlenderControl
+	BlenderControl      *BlenderControl
+	GPUSchedulerControl *RuntimeControl
+	ModelCacheControl   *RuntimeControl
+	ModelStore          resources.ModelStore
 	Egress             *egress.Service
 	AppAccess          *AppAccess
 	InstallationAccess *InstallationAccess
@@ -249,6 +253,10 @@ func (s *Server) ServeHTTP(original http.ResponseWriter, r *http.Request) {
 		"/internal/v1/resources/snapshot":                 "GET",
 		"/internal/v1/resources/workspaces":               "GET",
 		"/internal/v1/resources/workspaces/release":       "POST",
+		"/internal/v1/resources/models":                   "GET",
+		"/internal/v1/resources/gpu-scheduler":            "GET",
+		"/internal/v1/resources/gpu-residency/evict":      "POST",
+		"/internal/v1/resources/gpu-residency/force-drain": "POST",
 		"/internal/v1/blender/create":                     "POST",
 		"/internal/v1/blender/start":                      "POST",
 		"/internal/v1/blender/stop":                       "POST",
@@ -256,7 +264,12 @@ func (s *Server) ServeHTTP(original http.ResponseWriter, r *http.Request) {
 		"/internal/v1/blender/access":                     "POST",
 		"/internal/v1/blender/options":                    "POST",
 		"/app-commands":                                   "POST", "/healthz": "GET", "/readyz": "GET", "/identity/bootstrap": "POST", "/identity/login": "POST", "/identity/refresh": "POST", "/identity/logout": "POST", "/identity/me": "GET", "/identity/scopes": "GET", "/station/health": "GET",
-		"/api/v1/resources/gpu": "GET", "/api/v1/resources/node": "GET", "/api/v1/resources/summary": "GET", "/api/v1/resources/workloads": "GET", "/api/v1/resources/workspaces": "GET", "/api/v1/resources/workspaces/release": "POST"}
+		"/api/v1/resources/gpu": "GET", "/api/v1/resources/node": "GET", "/api/v1/resources/summary": "GET", "/api/v1/resources/workloads": "GET", "/api/v1/resources/workspaces": "GET", "/api/v1/resources/workspaces/release": "POST", "/api/v1/resources/models": "GET",
+		"/api/v1/resources/gpu-scheduler": "GET", "/api/v1/resources/gpu-residency/evict": "POST", "/api/v1/resources/gpu-residency/force-drain": "POST"}
+	evictPrefix, evictSHA, isModelEvict := matchModelEvictPath(r.URL.Path)
+	if isModelEvict {
+		routes[r.URL.Path] = "POST"
+	}
 	if strings.HasPrefix(r.URL.Path, "/app-operations/") || r.URL.Path == "/catalog/apps" || strings.HasPrefix(r.URL.Path, "/catalog/apps/") {
 		routes[r.URL.Path] = "GET"
 	}
@@ -292,6 +305,10 @@ func (s *Server) ServeHTTP(original http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
+	if isModelEvict && evictPrefix == "/internal/v1/resources/models/" {
+		s.internalResourcesEvictModel(w, r, requestID, evictSHA)
+		return
+	}
 	switch route {
 	case "/internal/v1/app-installations/authorize", "/internal/v1/app-installations/authorize-worker":
 		s.installationAccess(w, r.WithContext(ctx), requestID)
@@ -310,6 +327,18 @@ func (s *Server) ServeHTTP(original http.ResponseWriter, r *http.Request) {
 		return
 	case "/internal/v1/resources/workspaces/release":
 		s.internalResourcesReleaseWorkspace(w, r, requestID)
+		return
+	case "/internal/v1/resources/models":
+		s.internalResourcesModels(w, r, ctx, requestID)
+		return
+	case "/internal/v1/resources/gpu-scheduler":
+		s.internalResourcesGPUScheduler(w, r, ctx, requestID)
+		return
+	case "/internal/v1/resources/gpu-residency/evict":
+		s.internalResourcesEvictGPUResidency(w, r, requestID)
+		return
+	case "/internal/v1/resources/gpu-residency/force-drain":
+		s.internalResourcesForceDrainGPUResidency(w, r, requestID)
 		return
 	case "/internal/v1/blender/options":
 		s.blenderOptions(w, r, requestID)
@@ -483,6 +512,26 @@ func (s *Server) ServeHTTP(original http.ResponseWriter, r *http.Request) {
 	}
 	if route == "/api/v1/resources/workspaces/release" {
 		s.resourcesReleaseWorkspace(w, r, requestID, user)
+		return
+	}
+	if route == "/api/v1/resources/models" {
+		s.resourcesModels(w, r, ctx, requestID, user)
+		return
+	}
+	if route == "/api/v1/resources/gpu-scheduler" {
+		s.resourcesGPUScheduler(w, r, ctx, requestID, user)
+		return
+	}
+	if route == "/api/v1/resources/gpu-residency/evict" {
+		s.resourcesEvictGPUResidency(w, r, requestID, user)
+		return
+	}
+	if route == "/api/v1/resources/gpu-residency/force-drain" {
+		s.resourcesForceDrainGPUResidency(w, r, requestID, user)
+		return
+	}
+	if isModelEvict && evictPrefix == "/api/v1/resources/models/" {
+		s.resourcesEvictModel(w, r, requestID, evictSHA, user)
 		return
 	}
 	if strings.HasPrefix(route, "/api/v1/resources/") {

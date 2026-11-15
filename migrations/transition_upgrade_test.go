@@ -106,5 +106,13 @@ func testOperationJournalUpgrade(t *testing.T, previous int, table string) {
 }
 
 func TestPreflightRejectionUpgradePreservesInstallationHistory(t *testing.T) {
-	testOperationJournalUpgrade(t, 19, "station.runtime_management_transitions")
+	testOperationJournalUpgrade(t, 19, "(SELECT 1 FROM station.runtime_management_transitions WHERE phase='rejected_preflight') AS rejected_rows")
+}
+
+func TestGPUSchedulerUpgradePreservesInstallationHistory(t *testing.T) {
+	testOperationJournalUpgrade(t, 22, "station.gpu_scheduler_events")
+}
+
+func TestModelCacheUpgradePreservesInstallationHistory(t *testing.T) {
+	testOperationJournalUpgrade(t, 23, "station.model_cache_blobs")
 }
