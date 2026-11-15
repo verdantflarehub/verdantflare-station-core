@@ -2,10 +2,14 @@ package operations
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/verdantflarehub/verdantflare-station-core/internal/catalog"
 	"github.com/verdantflarehub/verdantflare-station-core/internal/identity"
 )
 
@@ -58,5 +62,71 @@ func TestWorkerCompatibilityExactVersionNeedsNoTransitionConfiguration(t *testin
 	}
 	if err := s.AuthorizeWorkerVersion(context.Background(), i, "0.1.2"); !errors.Is(err, ErrTransitionRelease) {
 		t.Fatal("undeclared old worker authorized", err)
+	}
+}
+
+func TestWorkerCompatibilityHelmCatalogTakesPrecedenceOverLegacyDashboardEntry(t *testing.T) {
+	ctx := context.Background()
+	dash, dashEntry := dashboardMaterialFixture(t)
+	installed := Installation{
+		StationID:  "station-helm",
+		AppID:      dashEntry.AppID,
+		AppVersion: "0.1.17",
+		State:      "installed",
+		Revision:   2,
+	}
+
+	// Without a Helm-managed catalog entry, a Dashboard-only app must still be denied.
+	dashOnlySvc := &Service{
+		StationID:                installed.StationID,
+		AppCenterAdmissionSource: &AppCenterAdmissionSource{Dashboard: dash},
+	}
+	if err := dashOnlySvc.AuthorizeWorkerVersion(ctx, installed, "0.1.17"); !errors.Is(err, identity.Denied) {
+		t.Fatalf("expected Dashboard-only app to be denied, got %v", err)
+	}
+
+	// Once upgraded into a Helm-managed catalog entry (matching appcenter_admission.go),
+	// worker version authorization succeeds even when legacy DashboardReleases still lists the app.
+	catPath := filepath.Join(t.TempDir(), "catalog.json")
+	catRaw, err := json.Marshal([]catalog.Entry{{
+		AppID:        dashEntry.AppID,
+		DisplayName:  "ComfyUI",
+		GroupID:      "image",
+		Brand:        "vf",
+		Models:       []string{},
+		Source:       "deploys/comfyui.yaml",
+		Namespace:    "verdantflare-app",
+		WorkloadName: dashEntry.AppID,
+		Version:      "0.1.17",
+		Helm: &catalog.Helm{
+			OCIRef:           "oci://example.invalid/charts/" + dashEntry.AppID,
+			ChartName:        dashEntry.AppID,
+			ChartVersion:     "0.1.17",
+			ManifestDigest:   "sha256:" + strings.Repeat("a", 64),
+			PackageDigest:    "sha256:" + strings.Repeat("b", 64),
+			PackageSizeBytes: 1024,
+			TargetNamespace:  "verdantflare-app",
+			ReleaseName:      dashEntry.AppID,
+			ValuesSource:     "deploys/comfyui.yaml",
+		},
+		Images: []catalog.Image{{Component: "server", Image: "example.invalid/comfyui:0.1.17"}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(catPath, catRaw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	catSvc, err := catalog.Load(catPath, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	helmSvc := &Service{
+		StationID:                installed.StationID,
+		Catalog:                  catSvc,
+		AppCenterAdmissionSource: &AppCenterAdmissionSource{Dashboard: dash},
+	}
+	if err := helmSvc.AuthorizeWorkerVersion(ctx, installed, "0.1.17"); err != nil {
+		t.Fatalf("expected Helm-managed app worker version authorization to succeed, got %v", err)
 	}
 }
